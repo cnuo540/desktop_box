@@ -336,32 +336,11 @@ public class MainViewModelTests
     }
 
     [Fact]
-    public void EnsureDesktopIconsVisible_ShowsIconsOnlyWhenTheyWereHidden()
+    public void DesktopIconsVisibility_ReflectsTheShellState()
     {
         var vm = NewVm();
-        // 桌面图标处于隐藏状态(例如一键整理后自动隐藏)。
-        // 注意要在 NewVm() 之后再设 setup:NewVm 内部会 Reset 掉所有 mock。
-        _desktopIcons.SetupGet(d => d.AreIconsVisible).Returns(false);
-        vm.RefreshDesktopIconsState();
-        vm.DesktopIconsVisible.Should().BeFalse();
-
-        vm.EnsureDesktopIconsVisible().Should().BeTrue();
-        vm.DesktopIconsVisible.Should().BeTrue();
-        _desktopIcons.Verify(d => d.SetVisible(true), Times.Once);
-
-        // 已经可见时不再重复调用(避免无意义地折腾外壳)
-        vm.EnsureDesktopIconsVisible().Should().BeFalse();
-        _desktopIcons.Verify(d => d.SetVisible(It.IsAny<bool>()), Times.Once);
-    }
-
-    [Fact]
-    public void EnsureDesktopIconsVisible_DoesNothingWhenIconsAreAlreadyVisible()
-    {
-        var vm = NewVm();   // NewVm 里 AreIconsVisible = true
+        // NewVm 里 AreIconsVisible = true;这里验证"读真实状态"这一步(桌面显隐本身是整层开关)
         vm.RefreshDesktopIconsState();
         vm.DesktopIconsVisible.Should().BeTrue();
-
-        vm.EnsureDesktopIconsVisible().Should().BeFalse();
-        _desktopIcons.Verify(d => d.SetVisible(It.IsAny<bool>()), Times.Never);
     }
 }

@@ -103,7 +103,7 @@ public class RenameAndDesktopVisibilityTests
     }
 
     [Fact]
-    public void DraggingAnItemOutToTheDesktop_ShowsDesktopIconsSoTheFileStaysVisible()
+    public void DraggingAnItemOutToTheDesktop_DoesNotTouchDesktopIconVisibility()
     {
         var tile = ReadRepositoryFile("src", "DesktopBox", "Controls", "ItemTile.xaml.cs");
         var start = tile.IndexOf("DroppedOnDesktop == true", StringComparison.Ordinal);
@@ -112,10 +112,11 @@ public class RenameAndDesktopVisibilityTests
         end.Should().BeGreaterThan(start);
         var body = tile[start..end];
 
-        body.Should().Contain("EnsureDesktopIconsVisible()");
-        // 先把桌面图标显示出来,再把这个条目从盒子里移除
-        body.IndexOf("EnsureDesktopIconsVisible()", StringComparison.Ordinal)
-            .Should().BeLessThan(body.IndexOf("RemoveFromBox()", StringComparison.Ordinal));
+        // 拖出只是"从盒子移除";系统图标显隐是整层开关,放开它会把桌面刷满(用户反馈过),
+        // 所以这里必须保持不碰显隐。
+        body.Should().Contain("RemoveFromBox()");
+        body.Should().NotContain("EnsureDesktopIconsVisible");
+        body.Should().NotContain("SetVisible");
     }
 
     // ---- 改名后界面(渲染出来的文字)必须真的变 ----
