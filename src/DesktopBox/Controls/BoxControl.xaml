@@ -41,13 +41,32 @@
                     MouseLeftButtonUp="OnHeaderUp">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>   <!-- 0 时间(平时显示,鼠标进盒子时隐藏) -->
+                        <ColumnDefinition Width="*"/>      <!-- 1 名称(居中) -->
+                        <ColumnDefinition Width="Auto"/>   <!-- 2 色标 + 操作按钮 -->
                     </Grid.ColumnDefinitions>
-                    <Rectangle Grid.Column="0" Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="#4FC3F7" Margin="0,0,8,0"/>
+
+                    <!-- 标题栏时钟:平时显示当前时间(HH:mm,每分钟刷新),鼠标移到盒子上(展开区域)时隐藏,
+                         把标题栏让给名称与右侧操作按钮。用 Hidden 而不是 Collapsed:保留占位,悬停时布局不跳动。 -->
+                    <TextBlock Grid.Column="0"
+                               x:Name="HeaderClock"
+                               Text="{Binding Source={x:Static ctl:HeaderClock.Instance}, Path=CurrentTime}"
+                               Margin="0,0,10,0"
+                               FontSize="12"
+                               Foreground="#B3FFFFFF"
+                               VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                        <Setter Property="Visibility" Value="Hidden"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <TextBlock Grid.Column="1"
                                Text="{Binding Header}"
                                FontWeight="SemiBold"
@@ -56,76 +75,92 @@
                                VerticalAlignment="Center"
                                TextAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
-                    <!-- 锁定位置:锁定后不能拖动/缩放(蓝色闭合锁=已锁定,灰色开口锁=未锁定)。
-                         锁定的盒子仍可卷起/悬停展开——它们不改变盒子位置。 -->
-                    <Button Grid.Column="2"
-                            x:Name="LockBtn"
-                            Click="OnToggleLock"
-                            ToolTip="{Binding LockActionText}"
-                            Width="24" Height="24" Margin="6,0,0,0" Padding="0"
-                            Background="Transparent"
-                            BorderBrush="#66FFFFFF"
-                            Cursor="Hand">
-                        <Path Width="16" Height="16" Stretch="Uniform"
-                              HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Path.Style>
-                                <Style TargetType="Path">
-                                    <Setter Property="Data" Value="M9,9 V6.5 A2.5,2.5 0 0 1 14,6.5 M5,9 H14 V17 H5 Z"/>
-                                    <Setter Property="Stroke" Value="#FF777777"/>
-                                    <Setter Property="StrokeThickness" Value="1.4"/>
+
+                    <!-- 右侧:盒子色标 + 三个操作按钮(锁 / 卷起 / 眼睛)。
+                         按钮平时隐藏,鼠标移到盒子上(展开区域)才显示——平时标题栏只留时间与名称。
+                         隐藏用 Hidden 保留占位,色标与名称的位置不会因悬停而跳动。 -->
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Rectangle Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="#4FC3F7"/>
+                        <StackPanel x:Name="HeaderActions" Orientation="Horizontal" Margin="8,0,0,0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Hidden"/>
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLocked}" Value="True">
-                                            <Setter Property="Data" Value="M7,9 V6.5 A2.5,2.5 0 0 1 12,6.5 V9 M5,9 H14 V17 H5 Z"/>
-                                            <Setter Property="Stroke" Value="#FF4FC3F7"/>
-                                            <Setter Property="StrokeThickness" Value="1.8"/>
+                                        <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible"/>
                                         </DataTrigger>
                                     </Style.Triggers>
                                 </Style>
-                            </Path.Style>
-                        </Path>
-                    </Button>
-                    <!-- 卷起/展开按钮:展开时显示向上箭头(点了就卷起),卷起时显示向下箭头。
-                         卷起后鼠标悬停会自动展开(可在设置里关掉)。 -->
-                    <Button Grid.Column="3"
-                            x:Name="CollapseBtn"
-                            Click="OnToggleCollapse"
-                            ToolTip="{Binding CollapseActionText}"
-                            Width="24" Height="24" Margin="6,0,0,0" Padding="0"
-                            Background="Transparent"
-                            BorderBrush="#66FFFFFF"
-                            Cursor="Hand">
-                        <Path Width="12" Height="7" Stretch="Uniform"
-                              HorizontalAlignment="Center" VerticalAlignment="Center"
-                              Stroke="White" StrokeThickness="1.8">
-                            <Path.Style>
-                                <Style TargetType="Path">
-                                    <Setter Property="Data" Value="M1,7 L6,1 L11,7"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
-                                            <Setter Property="Data" Value="M1,1 L6,7 L11,1"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </Path.Style>
-                        </Path>
-                    </Button>
-                    <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
-                    <Button Grid.Column="4"
-                            x:Name="ToggleIconsBtn"
-                            Click="OnToggleDesktopIcons"
-                            ToolTip="{DynamicResource tip.toggleIcons}"
-                            Width="24" Height="24" Margin="6,0,0,0" Padding="0"
-                            Background="Transparent"
-                            BorderBrush="#66FFFFFF"
-                            Cursor="Hand"
-                            Tag="{Binding MainVm.DesktopIconsVisible, RelativeSource={RelativeSource AncestorType=UserControl}}">
-                        <Path Width="16" Height="16" Stretch="Uniform"
-                              HorizontalAlignment="Center" VerticalAlignment="Center"
-                              StrokeThickness="1.6"
-                              Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Tag, Converter={StaticResource BoolToEyeBrush}}"
-                              Fill="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Tag, Converter={StaticResource BoolToEyeFill}}"
-                              Data="M12,5C5,5 1,12 1,12C1,12 5,19 12,19C19,19 23,12 23,12C23,12 19,5 12,5 Z M12,9A3,3 0 1,0 12,15A3,3 0 1,0 12,9 Z"/>
-                    </Button>
+                            </StackPanel.Style>
+                            <!-- 锁定位置:锁定后不能拖动/缩放(蓝色闭合锁=已锁定,灰色开口锁=未锁定)。
+                                 锁定的盒子仍可卷起/悬停展开——它们不改变盒子位置。 -->
+                            <Button x:Name="LockBtn"
+                                    Click="OnToggleLock"
+                                    ToolTip="{Binding LockActionText}"
+                                    Width="24" Height="24" Margin="4,0,0,0" Padding="0"
+                                    Background="Transparent"
+                                    BorderBrush="#66FFFFFF"
+                                    Cursor="Hand">
+                                <Path Width="16" Height="16" Stretch="Uniform"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Path.Style>
+                                        <Style TargetType="Path">
+                                            <Setter Property="Data" Value="M9,9 V6.5 A2.5,2.5 0 0 1 14,6.5 M5,9 H14 V17 H5 Z"/>
+                                            <Setter Property="Stroke" Value="#FF777777"/>
+                                            <Setter Property="StrokeThickness" Value="1.4"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                                    <Setter Property="Data" Value="M7,9 V6.5 A2.5,2.5 0 0 1 12,6.5 V9 M5,9 H14 V17 H5 Z"/>
+                                                    <Setter Property="Stroke" Value="#FF4FC3F7"/>
+                                                    <Setter Property="StrokeThickness" Value="1.8"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Path.Style>
+                                </Path>
+                            </Button>
+                            <!-- 卷起/展开按钮:展开时显示向上箭头(点了就卷起),卷起时显示向下箭头。
+                                 卷起后鼠标悬停会自动展开(可在设置里关掉)。 -->
+                            <Button x:Name="CollapseBtn"
+                                    Click="OnToggleCollapse"
+                                    ToolTip="{Binding CollapseActionText}"
+                                    Width="24" Height="24" Margin="4,0,0,0" Padding="0"
+                                    Background="Transparent"
+                                    BorderBrush="#66FFFFFF"
+                                    Cursor="Hand">
+                                <Path Width="12" Height="7" Stretch="Uniform"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Stroke="White" StrokeThickness="1.8">
+                                    <Path.Style>
+                                        <Style TargetType="Path">
+                                            <Setter Property="Data" Value="M1,7 L6,1 L11,7"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                                    <Setter Property="Data" Value="M1,1 L6,7 L11,1"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Path.Style>
+                                </Path>
+                            </Button>
+                            <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
+                            <Button x:Name="ToggleIconsBtn"
+                                    Click="OnToggleDesktopIcons"
+                                    ToolTip="{DynamicResource tip.toggleIcons}"
+                                    Width="24" Height="24" Margin="4,0,0,0" Padding="0"
+                                    Background="Transparent"
+                                    BorderBrush="#66FFFFFF"
+                                    Cursor="Hand"
+                                    Tag="{Binding MainVm.DesktopIconsVisible, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                <Path Width="16" Height="16" Stretch="Uniform"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      StrokeThickness="1.6"
+                                      Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Tag, Converter={StaticResource BoolToEyeBrush}}"
+                                      Fill="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Tag, Converter={StaticResource BoolToEyeFill}}"
+                                      Data="M12,5C5,5 1,12 1,12C1,12 5,19 12,19C19,19 23,12 23,12C23,12 19,5 12,5 Z M12,9A3,3 0 1,0 12,15A3,3 0 1,0 12,9 Z"/>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
                 </Grid>
             </Border>
 
