@@ -67,12 +67,11 @@ public class HeaderClockAndHoverTests
     }
 
     [Fact]
-    public void BoxHeader_LaysOutClockLeftNameCenterAccentAndActionsRight()
+    public void BoxHeader_LaysOutClockLeftNameCenterActionsRightWithoutAccentChip()
     {
         var xaml = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml");
         var clockAt = xaml.IndexOf("x:Name=\"HeaderClock\"", StringComparison.Ordinal);
         var nameAt = xaml.IndexOf("Text=\"{Binding Header}\"", StringComparison.Ordinal);
-        var accentAt = xaml.IndexOf("Fill=\"#4FC3F7\"", StringComparison.Ordinal);
         var actionsAt = xaml.IndexOf("x:Name=\"HeaderActions\"", StringComparison.Ordinal);
         var lockAt = xaml.IndexOf("x:Name=\"LockBtn\"", StringComparison.Ordinal);
         var collapseAt = xaml.IndexOf("x:Name=\"CollapseBtn\"", StringComparison.Ordinal);
@@ -80,11 +79,42 @@ public class HeaderClockAndHoverTests
 
         clockAt.Should().BeGreaterThanOrEqualTo(0);
         nameAt.Should().BeGreaterThan(clockAt);        // 时间在名称左边
-        accentAt.Should().BeGreaterThan(nameAt);       // 色标(原左侧蓝方块)已移到名称右边
-        actionsAt.Should().BeGreaterThan(accentAt);    // 操作按钮在色标右侧
+        actionsAt.Should().BeGreaterThan(nameAt);      // 操作按钮在名称右边
         lockAt.Should().BeGreaterThan(actionsAt);
         collapseAt.Should().BeGreaterThan(lockAt);
         eyeAt.Should().BeGreaterThan(collapseAt);      // 眼睛按钮在最右
+
+        // 原先名称左侧的蓝色小方块(色标)已按要求移除
+        // (缩放手柄模板里还有透明 Rectangle,所以只断言"色标那个"的特征)
+        xaml.Should().NotContain("Fill=\"#4FC3F7\"");
+        xaml.Should().NotContain("RadiusX=\"2\" RadiusY=\"2\"");
+    }
+
+    [Fact]
+    public void HeaderClockFont_IsLargerThanTheBoxName()
+    {
+        var xaml = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml");
+
+        var clockSize = FontSizeOf(Block(xaml, "x:Name=\"HeaderClock\"", "</TextBlock>"));
+        var nameSize = FontSizeOf(Block(xaml, "Text=\"{Binding Header}\"", "/>"));
+
+        clockSize.Should().BeGreaterThan(nameSize, "时间字体要比盒子名称更大更醒目");
+    }
+
+    private static string Block(string source, string startMarker, string endMarker)
+    {
+        var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0);
+        var end = source.IndexOf(endMarker, start, StringComparison.Ordinal);
+        end.Should().BeGreaterThan(start);
+        return source[start..end];
+    }
+
+    private static double FontSizeOf(string element)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(element, "FontSize=\"([0-9.]+)\"");
+        match.Success.Should().BeTrue($"元素里应有 FontSize:{element}");
+        return double.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     [Fact]
