@@ -27,6 +27,9 @@ public class Box
     /// <summary>是否卷起(折叠成只剩标题栏)。持久化。
     /// 卷起的盒子在鼠标悬停时会临时展开(见 BoxCollapse/BoxViewModel.IsHoverExpanded),移开后自动恢复卷起。</summary>
     public bool IsCollapsed { get; set; }
+
+    /// <summary>是否锁定位置。持久化。锁定后不能拖动/缩放,避免误移动(卷起、悬停展开不受影响)。</summary>
+    public bool IsLocked { get; set; }
 }
 
 /// <summary>标签盒子里的一个标签页。Name 可观察(重命名时 UI 自动刷新)。</summary>

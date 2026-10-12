@@ -45,6 +45,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Rectangle Grid.Column="0" Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="#4FC3F7" Margin="0,0,8,0"/>
                     <TextBlock Grid.Column="1"
@@ -53,10 +54,39 @@
                                FontSize="13"
                                Foreground="White"
                                VerticalAlignment="Center"
+                               TextAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
+                    <!-- 锁定位置:锁定后不能拖动/缩放(蓝色闭合锁=已锁定,灰色开口锁=未锁定)。
+                         锁定的盒子仍可卷起/悬停展开——它们不改变盒子位置。 -->
+                    <Button Grid.Column="2"
+                            x:Name="LockBtn"
+                            Click="OnToggleLock"
+                            ToolTip="{Binding LockActionText}"
+                            Width="24" Height="24" Margin="6,0,0,0" Padding="0"
+                            Background="Transparent"
+                            BorderBrush="#66FFFFFF"
+                            Cursor="Hand">
+                        <Path Width="16" Height="16" Stretch="Uniform"
+                              HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Data" Value="M9,9 V6.5 A2.5,2.5 0 0 1 14,6.5 M5,9 H14 V17 H5 Z"/>
+                                    <Setter Property="Stroke" Value="#FF777777"/>
+                                    <Setter Property="StrokeThickness" Value="1.4"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                            <Setter Property="Data" Value="M7,9 V6.5 A2.5,2.5 0 0 1 12,6.5 V9 M5,9 H14 V17 H5 Z"/>
+                                            <Setter Property="Stroke" Value="#FF4FC3F7"/>
+                                            <Setter Property="StrokeThickness" Value="1.8"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                    </Button>
                     <!-- 卷起/展开按钮:展开时显示向上箭头(点了就卷起),卷起时显示向下箭头。
                          卷起后鼠标悬停会自动展开(可在设置里关掉)。 -->
-                    <Button Grid.Column="2"
+                    <Button Grid.Column="3"
                             x:Name="CollapseBtn"
                             Click="OnToggleCollapse"
                             ToolTip="{Binding CollapseActionText}"
@@ -80,7 +110,7 @@
                         </Path>
                     </Button>
                     <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
-                    <Button Grid.Column="3"
+                    <Button Grid.Column="4"
                             x:Name="ToggleIconsBtn"
                             Click="OnToggleDesktopIcons"
                             ToolTip="{DynamicResource tip.toggleIcons}"
@@ -105,10 +135,15 @@
                   Visibility="{Binding ShowTabs, Converter={StaticResource BoolVis}}"
                   Background="#33000000">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>     <!-- 左弹性:把标签组顶到中间 -->
+                    <ColumnDefinition Width="Auto"/>  <!-- 标签组(合并盒子的多个名字) -->
+                    <ColumnDefinition Width="*"/>     <!-- 右弹性 -->
                 </Grid.ColumnDefinitions>
-                <ListBox x:Name="TabList" Grid.Column="0"
+                <!-- 标签组居中:两侧各一个弹性列。MaxWidth 兜底——标签多到超过盒子宽度时
+                     仍由 ListBox 内部横向滚动(滚轮可换标签),不会顶穿盒子。 -->
+                <ListBox x:Name="TabList" Grid.Column="1"
+                         MaxWidth="{Binding ActualWidth, ElementName=TabRow}"
+                         Margin="0,0,34,0"
                          ItemsSource="{Binding Tabs}"
                          SelectedItem="{Binding SelectedTab, Mode=TwoWay}"
                          Background="Transparent"
@@ -135,6 +170,8 @@
                             <Setter Property="Foreground" Value="#FFCCCCCC"/>
                             <Setter Property="FontSize" Value="12"/>
                             <Setter Property="Cursor" Value="Hand"/>
+                            <!-- 鼠标移到标签名上即切换(等价于点一下),不必先点再等 -->
+                            <EventSetter Event="MouseEnter" Handler="OnTabItemMouseEnter"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
@@ -220,7 +257,8 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <Button Grid.Column="1" Content="+"
+                <Button Grid.Column="2" Content="+"
+                        HorizontalAlignment="Right"
                         Width="24" Height="22" Margin="2,3,8,3"
                         FontSize="16" Padding="0"
                         Click="OnAddTab" ToolTip="{DynamicResource tip.newTab}"/>
@@ -307,9 +345,9 @@
             </ScrollViewer>
 
             <!-- 八方向缩放手柄:覆盖卡片边缘。中间透明区域 hit-test 穿透到下层,不影响交互。
-                 卷起时不显示(只剩标题栏,没有可缩放的内容区)。 -->
+                 卷起时(没有内容区可缩放)或锁定位置时不显示。 -->
             <Grid Grid.Row="0" Grid.RowSpan="3" Margin="0"
-                  Visibility="{Binding ShowContent, Converter={StaticResource BoolVis}}">
+                  Visibility="{Binding ShowResizeHandles, Converter={StaticResource BoolVis}}">
                 <Grid.Resources>
                     <Style TargetType="Thumb">
                         <Setter Property="Background" Value="Transparent"/>
@@ -364,6 +402,8 @@
                 <MenuItem Header="{DynamicResource view.tile}" Click="OnViewTile" IsCheckable="True"
                           IsChecked="{Binding ViewMode, Converter={StaticResource ModeEqual}, ConverterParameter={x:Static m:ViewMode.Tile}, Mode=OneWay}"/>
             </MenuItem>
+            <!-- 一键整理桌面:与托盘/桌面右键同一入口,扫桌面新文件并归类进整理盒子 -->
+            <MenuItem Header="{DynamicResource menu.organize}" Click="OnOrganizeDesktop"/>
             <!-- 卷起/展开:卷起后鼠标悬停会自动展开、移开自动收起(可在设置里关闭)。
                  两个菜单项按当前状态二选一显示,动词与即将发生的动作一致。 -->
             <MenuItem Header="{DynamicResource box.menu.rollUp}" Click="OnToggleCollapse">
@@ -384,6 +424,31 @@
                         <Setter Property="Visibility" Value="Collapsed"/>
                         <Style.Triggers>
                             <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </MenuItem.Style>
+            </MenuItem>
+            <!-- 锁定位置:锁定后不能拖动/缩放,避免误移动 -->
+            <MenuItem Header="{DynamicResource box.menu.lock}" Click="OnToggleLock">
+                <MenuItem.Style>
+                    <Style TargetType="MenuItem">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </MenuItem.Style>
+            </MenuItem>
+            <MenuItem Header="{DynamicResource box.menu.unlock}" Click="OnToggleLock">
+                <MenuItem.Style>
+                    <Style TargetType="MenuItem">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsLocked}" Value="True">
                                 <Setter Property="Visibility" Value="Visible"/>
                             </DataTrigger>
                         </Style.Triggers>

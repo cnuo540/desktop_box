@@ -879,6 +879,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             b.RefreshHeader();
             b.RefreshCollapseActionText();
+            b.RefreshLockActionText();
             foreach (var t in b.Tabs) t.RefreshHeader();
         }
     }

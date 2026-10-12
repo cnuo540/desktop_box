@@ -30,8 +30,14 @@ public partial class BoxViewModel : ObservableObject
     /// <summary>卷起后保留的标题栏高度(像素),由 BoxControl 按标题栏实测高度回填。</summary>
     [ObservableProperty] private double _collapsedHeight = BoxCollapse.DefaultHeaderHeight;
 
+    /// <summary>是否锁定位置(锁定后不可拖动/缩放)。持久化到 boxes.json。</summary>
+    [ObservableProperty] private bool _isLocked;
+
     /// <summary>当前是否按卷起态渲染(卷起且未悬停展开)。</summary>
     public bool IsRolled => BoxCollapse.IsRolled(IsCollapsed, IsHoverExpanded);
+
+    /// <summary>是否允许拖动/缩放盒子。</summary>
+    public bool CanMove => !IsLocked;
 
     /// <summary>窗口/内容应使用的高度:卷起时=标题栏高度,否则=用户设定的高度。
     /// 盒子宿主窗口(BoxWindow)按这个值设置 HWND 高度,所以卷起/展开只改高度、不动 X/Y。</summary>
@@ -42,6 +48,9 @@ public partial class BoxViewModel : ObservableObject
 
     /// <summary>是否显示标签行:标签盒子且非卷起态。</summary>
     public bool ShowTabs => IsTabbed && ShowContent;
+
+    /// <summary>是否显示八向缩放手柄:卷起时没有内容区可缩放,锁定时不允许改尺寸。</summary>
+    public bool ShowResizeHandles => ShowContent && !IsLocked;
 
     /// <summary>卷起/展开按钮的提示文本:随当前语言与卷起状态变化(卷起时提示"展开盒子")。</summary>
     public string CollapseActionText
@@ -64,11 +73,34 @@ public partial class BoxViewModel : ObservableObject
     /// <summary>语言切换后重算 CollapseActionText(触发 PropertyChanged)。</summary>
     public void RefreshCollapseActionText() => OnPropertyChanged(nameof(CollapseActionText));
 
+    /// <summary>锁定/解锁按钮的提示文本:随当前语言与锁定状态变化。</summary>
+    public string LockActionText
+    {
+        get
+        {
+            try
+            {
+                var loc = App.Services.GetRequiredService<ILocalizerService>();
+                return loc[IsLocked ? "tip.unlockBox" : "tip.lockBox"];
+            }
+            catch
+            {
+                // 无 DI 容器时(设计器/单元测试直接构造 VM):提示退化为英文兜底,不影响锁定功能本身。
+                return IsLocked ? "Unlock box position" : "Lock box position";
+            }
+        }
+    }
+
+    /// <summary>语言切换后重算 LockActionText(触发 PropertyChanged)。</summary>
+    public void RefreshLockActionText() => OnPropertyChanged(nameof(LockActionText));
+
     partial void OnIsCollapsedChanged(bool value) => RefreshCollapseState();
 
     partial void OnIsHoverExpandedChanged(bool value) => RefreshCollapseState();
 
     partial void OnCollapsedHeightChanged(double value) => RefreshCollapseState();
+
+    partial void OnIsLockedChanged(bool value) => RefreshLockState();
 
     // 高度变化会改变 RenderHeight(展开态下),通知出去让宿主窗口跟着改 HWND 高度。
     partial void OnHeightChanged(double value) => OnPropertyChanged(nameof(RenderHeight));
@@ -80,11 +112,23 @@ public partial class BoxViewModel : ObservableObject
         OnPropertyChanged(nameof(RenderHeight));
         OnPropertyChanged(nameof(ShowContent));
         OnPropertyChanged(nameof(ShowTabs));
+        OnPropertyChanged(nameof(ShowResizeHandles));
         OnPropertyChanged(nameof(CollapseActionText));
+    }
+
+    /// <summary>重新计算并通知所有锁定态相关属性。</summary>
+    private void RefreshLockState()
+    {
+        OnPropertyChanged(nameof(CanMove));
+        OnPropertyChanged(nameof(ShowResizeHandles));
+        OnPropertyChanged(nameof(LockActionText));
     }
 
     /// <summary>卷起/展开切换(用户操作,持久化由调用方 ScheduleSave)。</summary>
     public void ToggleCollapsed() => IsCollapsed = !IsCollapsed;
+
+    /// <summary>锁定/解锁位置切换(用户操作,持久化由调用方 ScheduleSave)。</summary>
+    public void ToggleLocked() => IsLocked = !IsLocked;
 
     public ObservableCollection<BoxItem> Items { get; } = new();
     public ObservableCollection<BoxTab> Tabs { get; } = new();
@@ -174,6 +218,7 @@ public partial class BoxViewModel : ObservableObject
         _accentColor = model.AccentColor;
         _viewMode = model.ViewMode;
         _isCollapsed = model.IsCollapsed;
+        _isLocked = model.IsLocked;
         foreach (var i in model.Items) Items.Add(i);
         foreach (var t in model.Tabs) Tabs.Add(t);
         if (Tabs.Count > 0) _selectedTab = Tabs[0];
@@ -224,6 +269,7 @@ public partial class BoxViewModel : ObservableObject
         AccentColor = AccentColor,
         ViewMode = ViewMode,
         IsCollapsed = IsCollapsed,
+        IsLocked = IsLocked,
         Items = new(Items),
         Tabs = new(Tabs)
     };

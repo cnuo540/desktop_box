@@ -128,6 +128,29 @@ public partial class BoxControl : UserControl
 
     private void OnToggleCollapse(object sender, RoutedEventArgs e) => ToggleCollapse();
 
+    /// <summary>锁定/解锁位置(持久化)。锁定后不响应拖动/缩放,避免误移动。</summary>
+    private void ToggleLock()
+    {
+        if (Vm is null) return;
+        StopHoverTimer();
+        Vm.ToggleLocked();
+        MainVm.ScheduleSave();
+    }
+
+    private void OnToggleLock(object sender, RoutedEventArgs e) => ToggleLock();
+
+    /// <summary>盒子右键 →「一键整理桌面」(与托盘/桌面空白处右键同一命令)。</summary>
+    private void OnOrganizeDesktop(object sender, RoutedEventArgs e)
+        => MainVm.OrganizeCommand.Execute(null);
+
+    /// <summary>鼠标移到某个标签名上就切换过去(等价于点一下该标签)。</summary>
+    private void OnTabItemMouseEnter(object sender, MouseEventArgs e)
+    {
+        if (Vm is null) return;
+        if (sender is ListBoxItem { DataContext: BoxTab tab } && !ReferenceEquals(Vm.SelectedTab, tab))
+            Vm.SelectedTab = tab;
+    }
+
     /// <summary>把"标题栏实测高度 + 卡片边框(物理像素)"写回 VM,作为卷起后的窗口高度。
     /// 写死常量在 DPI 缩放/系统字号下会裁掉标题或露出一截内容,所以实测回填。</summary>
     private void UpdateCollapsedHeight()
@@ -197,6 +220,7 @@ public partial class BoxControl : UserControl
             e.Handled = true;
             return;
         }
+        if (!Vm.CanMove) return;   // 位置已锁定:不拖动
         _isDragging = true;
         _dragOrigin = PointToScreen(e.GetPosition(this));
         _boxOrigin = new Point(Vm.X, Vm.Y);   // 记录起点:拖动期间意图位置=起点+累积位移
@@ -262,7 +286,7 @@ public partial class BoxControl : UserControl
     // ±9000）。改成鼠标绝对坐标后回路消失，鼠标指哪边在哪。
     private void OnResizeStarted(object sender, DragStartedEventArgs e)
     {
-        if (Vm is null) return;
+        if (Vm is null || !Vm.CanMove) return;   // 位置已锁定:不改尺寸
         _isResizing = true;
         _resizeDir = (sender as FrameworkElement)?.Tag as string ?? "SE";
         _resizeOrigin = new Rect(Vm.X, Vm.Y, Vm.Width, Vm.Height);
@@ -504,16 +528,17 @@ public partial class BoxControl : UserControl
     private void OnDelete(object sender, RoutedEventArgs e)
     {
         if (Vm is null) return;
+        var box = Vm;
 
-        // 非空盒子(含任意标签里的条目)不允许直接删除,避免用户误以为文件丢失
-        if (Vm.TotalItemCount > 0)
-        {
-            InputDialog.Inform(string.Format(Localizer["dialog.deleteBox.nonEmpty"], Vm.Header, Vm.TotalItemCount));
-            return;
-        }
+        // 非空盒子:确认后先清空盒子里的引用再删盒子。清空只移除"盒子里的显示",
+        // 文件本体从不删除(整理本就是只引用),所以不会因为删盒子丢文件。
+        var message = box.TotalItemCount > 0
+            ? string.Format(Localizer["dialog.deleteBox.clearThenDelete"], box.Header, box.TotalItemCount)
+            : string.Format(Localizer["dialog.deleteBox.empty"], box.Header);
+        if (!InputDialog.Confirm(message)) return;
 
-        if (InputDialog.Confirm(string.Format(Localizer["dialog.deleteBox.empty"], Vm.Header)))
-            MainVm.RemoveBoxCommand.Execute(Vm);
+        if (box.TotalItemCount > 0) box.ClearAll();
+        MainVm.RemoveBoxCommand.Execute(box);
     }
 
     // ---- 标签操作 ----

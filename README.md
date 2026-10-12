@@ -44,7 +44,8 @@
 | 🧹 | **One-click Tidy** — Scans your desktop and auto-sorts every file into a **tabbed box** (Apps / Documents / Images / Videos / Audio / Shortcuts / Archives / Folders / Other). **Incremental**: only new files on each run. |
 | 📌 | **Reference-only, never moves** — The box stores *paths*, not copies. Your files stay exactly where they were. Scripts and shortcuts that hard-code desktop paths keep working. |
 | 📦 | **Drag-drop boxes** — Create custom boxes anywhere, drag in apps/files/folders/URLs, double-click to open. 8-direction resize, edge-snap with hysteresis, multi-monitor clamp. |
-| 🗂️ | **Tabbed boxes** — Convert/merge/split boxes into tabbed containers; reorder tabs by drag. |
+| 🗂️ | **Tabbed boxes** — Convert/merge/split boxes into tabbed containers; tab names are centered and **hovering a tab name switches to it** instantly; reorder tabs by drag. |
+| 🔒 | **Lock position** — One click on the padlock (or the context menu) freezes a box so it can't be dragged or resized by accident. Rolling up / hover-expand still work. |
 | 🔻 | **Roll up & auto-expand on hover** — Roll a box up to just its title bar (chevron, double-click the title, or context menu); hovering expands it and it rolls back when the pointer leaves. Toggle in Settings. |
 | 👁️ | **Hide/Show desktop icons** — One toggle clears your real desktop icons (purely visual, no files touched). |
 | 🖥️ | **System-icons box** — This PC / Recycle Bin / Control Panel / Network with **real system icons**. |
@@ -56,10 +57,11 @@
 
 | | 功能 |
 |---|---|
-| 🧹 | **一键整理** — 扫描桌面,按类型自动归类进**标签盒子**(应用程序/文档/图片/视频/音频/快捷方式/压缩包/文件夹/其他)。**增量**:每次只处理新文件。 |
+| 🧹 | **一键整理** — 扫描桌面,按类型自动归类进**标签盒子**(应用程序/文档/图片/视频/音频/快捷方式/压缩包/文件夹/其他)。**增量**:每次只处理新文件。盒子右键菜单里也能直接触发。 |
 | 📌 | **只引用、绝不移动** — 盒子存的是路径,不是副本。文件原地不动,写死桌面路径的脚本/快捷方式照常工作。 |
 | 📦 | **拖放整理盒** — 任意位置建盒子,拖入程序/文件/文件夹/网址,双击打开。8 向缩放、带迟滞的贴边磁吸、多显示器边界限制。 |
-| 🗂️ | **标签盒子** — 盒子可转标签盒子、合并/拆分,标签可拖动排序。 |
+| 🗂️ | **标签盒子** — 盒子可转标签盒子、合并/拆分；标签名**居中**显示、**鼠标移上去即切换**，标签可拖动排序。 |
+| 🔒 | **锁定位置** — 点标题栏的锁（或右键「锁定位置」）后盒子不能再拖动/缩放，避免误移动；卷起/悬停展开照常可用。 |
 | 🔻 | **卷起 + 悬停自动展开** — 盒子可卷起成只剩标题栏(标题栏箭头/双击标题/右键菜单);鼠标悬停自动展开、移开自动收起,可在设置里关闭。 |
 | 👁️ | **隐藏/显示桌面图标** — 一键清空桌面真实图标(纯视觉,不动文件)。 |
 | 🖥️ | **系统图标盒子** — 此电脑/回收站/控制面板/网络,用**真实系统图标**。 |
