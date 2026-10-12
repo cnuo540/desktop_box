@@ -14,7 +14,7 @@
     <s:String x:Key="menu.newBox">New Box</s:String>
     <s:String x:Key="menu.addSysIcons">Add System Icons Box</s:String>
     <s:String x:Key="menu.organize">Tidy Desktop</s:String>
-    <s:String x:Key="menu.toggleIcons">Hide/Show Collected Desktop Icons</s:String>
+    <s:String x:Key="menu.toggleIcons">Hide/Show Desktop Icons</s:String>
     <s:String x:Key="menu.refreshItems">Refresh Missing Icons</s:String>
     <s:String x:Key="menu.settings">Settings</s:String>
     <s:String x:Key="menu.openLog">Open Log Folder</s:String>
@@ -45,7 +45,7 @@
     <s:String x:Key="box.menu.showClock">Show Clock</s:String>
     <s:String x:Key="box.menu.delete">Delete Box</s:String>
 
-    <s:String x:Key="tip.toggleIcons">Hide/Show collected desktop icons (uncollected stay visible)</s:String>
+    <s:String x:Key="tip.toggleIcons">Show/Hide desktop icons (all-or-nothing, no files are moved)</s:String>
     <s:String x:Key="tip.newTab">New Tab</s:String>
     <s:String x:Key="tip.rollUp">Roll up box (auto-expands on hover)</s:String>
     <s:String x:Key="tip.expandBox">Expand box</s:String>
@@ -111,7 +111,7 @@
     <s:String x:Key="dialog.organize.empty.done">No new desktop files to tidy; everything is already sorted.</s:String>
     <s:String x:Key="dialog.organize.done">Tidied {0} new file(s) into the "Desktop Tidy" box{1}.&#x0a;(Files were not moved; icons load shortly.)</s:String>
     <s:String x:Key="dialog.organize.sysIconsTag"> (and added system icons)</s:String>
-    <s:String x:Key="dialog.organize.hidIcons">&#x0a;&#x0a;To avoid duplicates, the desktop icons of items now collected in boxes have been hidden.&#x0a;(Only collected items are hidden — folders you create on the desktop, or files you drag back out, stay visible.)&#x0a;To show everything again: tray menu "Hide/Show Collected Desktop Icons", or the eye icon on the box title bar.</s:String>
+    <s:String x:Key="dialog.organize.hidIcons">&#x0a;&#x0a;To avoid duplicate icons, desktop icons were hidden automatically.&#x0a;Note: this is the system-wide toggle — folders you create on the desktop, or files you drag back out, will also be invisible (nothing is lost).&#x0a;To show them again: tray menu "Hide/Show Desktop Icons", or the eye icon on the box title bar.</s:String>
 
     <s:String x:Key="cat.apps">Applications</s:String>
     <s:String x:Key="cat.docs">Documents</s:String>
