@@ -42,6 +42,7 @@
     <s:String x:Key="box.menu.expandBox">Expand Box</s:String>
     <s:String x:Key="box.menu.lock">Lock Position</s:String>
     <s:String x:Key="box.menu.unlock">Unlock Position</s:String>
+    <s:String x:Key="box.menu.showClock">Show Clock</s:String>
     <s:String x:Key="box.menu.delete">Delete Box</s:String>
 
     <s:String x:Key="tip.toggleIcons">Show/Hide Desktop Icons</s:String>

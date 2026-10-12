@@ -47,6 +47,7 @@
     <s:String x:Key="box.menu.expandBox">展开盒子</s:String>
     <s:String x:Key="box.menu.lock">锁定位置</s:String>
     <s:String x:Key="box.menu.unlock">解锁位置</s:String>
+    <s:String x:Key="box.menu.showClock">显示时间</s:String>
     <s:String x:Key="box.menu.delete">删除盒子</s:String>
 
     <!-- tooltip -->

@@ -139,6 +139,14 @@ public partial class BoxControl : UserControl
 
     private void OnToggleLock(object sender, RoutedEventArgs e) => ToggleLock();
 
+    /// <summary>右键菜单:显示/隐藏本盒子标题栏的时间(按盒子生效并持久化,默认关闭)。</summary>
+    private void OnToggleShowClock(object sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        Vm.ToggleShowClock();
+        MainVm.ScheduleSave();
+    }
+
     /// <summary>图标大小按钮:大 → 中 → 小图标循环(全局,所有盒子一致)。</summary>
     private void OnCycleIconSize(object sender, RoutedEventArgs e) => MainVm.CycleIconSize();
 

@@ -57,21 +57,22 @@
                         <ColumnDefinition Width="Auto"/>   <!-- 2 色标 + 操作按钮 -->
                     </Grid.ColumnDefinitions>
 
-                    <!-- 标题栏时钟:平时显示当前时间(HH:mm,每分钟刷新),鼠标移到盒子上(展开区域)时隐藏,
-                         把标题栏让给名称与右侧操作按钮。用 Hidden 而不是 Collapsed:保留占位,悬停时布局不跳动。 -->
+                    <!-- 标题栏时钟:默认关闭(在盒子右键菜单「显示时间」里按盒子开启),避免所有盒子都显示时间。
+                         开启后鼠标移到盒子上时淡出(用 Opacity 而不是 Visibility:保留占位,悬停时名称不跳动)。 -->
                     <TextBlock Grid.Column="0"
                                x:Name="HeaderClock"
                                Text="{Binding Source={x:Static ctl:HeaderClock.Instance}, Path=CurrentTime}"
+                               Visibility="{Binding ShowClock, Converter={StaticResource BoolVis}}"
                                Margin="0,0,10,0"
                                FontSize="16"
                                Foreground="#B3FFFFFF"
                                VerticalAlignment="Center">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Visible"/>
+                                <Setter Property="Opacity" Value="1"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=UserControl}}" Value="True">
-                                        <Setter Property="Visibility" Value="Hidden"/>
+                                        <Setter Property="Opacity" Value="0"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -477,6 +478,9 @@
                 <MenuItem Header="{DynamicResource view.tile}" Click="OnViewTile" IsCheckable="True"
                           IsChecked="{Binding ViewMode, Converter={StaticResource ModeEqual}, ConverterParameter={x:Static m:ViewMode.Tile}, Mode=OneWay}"/>
             </MenuItem>
+            <!-- 显示时间:按盒子开启标题栏时钟(默认关闭,避免所有盒子都显示时间) -->
+            <MenuItem Header="{DynamicResource box.menu.showClock}" Click="OnToggleShowClock"
+                      IsCheckable="True" IsChecked="{Binding ShowClock, Mode=OneWay}"/>
             <!-- 一键整理桌面:与托盘/桌面右键同一入口,扫桌面新文件并归类进整理盒子 -->
             <MenuItem Header="{DynamicResource menu.organize}" Click="OnOrganizeDesktop"/>
             <!-- 卷起/展开:卷起后鼠标悬停会自动展开、移开自动收起(可在设置里关闭)。

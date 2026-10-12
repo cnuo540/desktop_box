@@ -36,6 +36,9 @@ public partial class BoxViewModel : ObservableObject
     /// <summary>正被拖动的盒子悬停在本盒子上(松手就把对方合并进来)。纯视图态,不持久化。</summary>
     [ObservableProperty] private bool _isMergeTarget;
 
+    /// <summary>是否在标题栏显示时间(时钟)。持久化,默认关闭——避免所有盒子都显示时间。</summary>
+    [ObservableProperty] private bool _showClock;
+
     /// <summary>当前是否按卷起态渲染(卷起且未悬停展开)。</summary>
     public bool IsRolled => BoxCollapse.IsRolled(IsCollapsed, IsHoverExpanded);
 
@@ -156,6 +159,9 @@ public partial class BoxViewModel : ObservableObject
     /// <summary>锁定/解锁位置切换(用户操作,持久化由调用方 ScheduleSave)。</summary>
     public void ToggleLocked() => IsLocked = !IsLocked;
 
+    /// <summary>显示/隐藏标题栏时间切换(用户操作,持久化由调用方 ScheduleSave)。</summary>
+    public void ToggleShowClock() => ShowClock = !ShowClock;
+
     public ObservableCollection<BoxItem> Items { get; } = new();
     public ObservableCollection<BoxTab> Tabs { get; } = new();
 
@@ -246,6 +252,7 @@ public partial class BoxViewModel : ObservableObject
         _viewMode = model.ViewMode;
         _isCollapsed = model.IsCollapsed;
         _isLocked = model.IsLocked;
+        _showClock = model.ShowClock;
         foreach (var i in model.Items) Items.Add(i);
         foreach (var t in model.Tabs) Tabs.Add(t);
         if (Tabs.Count > 0) _selectedTab = Tabs[0];
@@ -297,6 +304,7 @@ public partial class BoxViewModel : ObservableObject
         ViewMode = ViewMode,
         IsCollapsed = IsCollapsed,
         IsLocked = IsLocked,
+        ShowClock = ShowClock,
         Items = new(Items),
         Tabs = new(Tabs)
     };

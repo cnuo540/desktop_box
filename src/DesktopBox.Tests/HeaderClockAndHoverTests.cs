@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using DesktopBox.Controls;
 using DesktopBox.Models;
+using DesktopBox.Services;
 using DesktopBox.ViewModels;
 using FluentAssertions;
 
@@ -118,20 +119,82 @@ public class HeaderClockAndHoverTests
     }
 
     [Fact]
-    public void BoxHeader_HidesActionsAndShowsClockUntilTheMouseEntersTheBox()
+    public void BoxHeader_ShowsTheClockOnlyWhenEnabledAndFadesItOutOnHover()
     {
         var xaml = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml");
+        var clockStart = xaml.IndexOf("x:Name=\"HeaderClock\"", StringComparison.Ordinal);
+        var clockBlock = xaml[clockStart..xaml.IndexOf("</TextBlock>", clockStart, StringComparison.Ordinal)];
         var actionsBlock = xaml[xaml.IndexOf("x:Name=\"HeaderActions\"", StringComparison.Ordinal)..];
 
-        // 时间:默认可见 → 鼠标进盒子(展开区域)变 Hidden(保留占位,悬停时布局不跳)
-        xaml.Should().Contain("{Binding Source={x:Static ctl:HeaderClock.Instance}, Path=CurrentTime}");
-        xaml.Should().Contain("<Setter Property=\"Visibility\" Value=\"Visible\"/>");
-        xaml.Should().Contain("<Setter Property=\"Visibility\" Value=\"Hidden\"/>");
+        // 时间:由本盒子的 ShowClock 开关决定显示与否(默认关闭,避免所有盒子都挂个时钟)
+        clockBlock.Should().Contain("Visibility=\"{Binding ShowClock, Converter={StaticResource BoolVis}}\"");
+        clockBlock.Should().Contain("{Binding Source={x:Static ctl:HeaderClock.Instance}, Path=CurrentTime}");
+        // 悬停淡出走 Opacity:不与上面的 Visibility 绑定打架,且保留占位(名称悬停时不跳动)
+        clockBlock.Should().Contain("<Setter Property=\"Opacity\" Value=\"0\"/>");
+        clockBlock.Should().NotContain("Property=\"Visibility\"");
+
         // 操作按钮:默认 Hidden → 悬停 Visible
         actionsBlock.Should().Contain("<Setter Property=\"Visibility\" Value=\"Hidden\"/>");
         actionsBlock.Should().Contain("<Setter Property=\"Visibility\" Value=\"Visible\"/>");
-        // 触发条件统一用"鼠标是否在盒子上"
-        xaml.Should().Contain("Binding=\"{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=UserControl}}\"");
+    }
+
+    [Fact]
+    public void ClockVisibility_FollowsThePerBoxSwitch()
+    {
+        RunOnSta(() =>
+        {
+            var vm = new BoxViewModel(new Box { Name = "B", Width = 300, Height = 200 });
+            var control = new BoxControl { DataContext = vm, Width = 300, Height = 200 };
+            Arrange(control);
+
+            var clock = (TextBlock)control.FindName("HeaderClock")!;
+            clock.Visibility.Should().Be(Visibility.Collapsed, "时间默认关闭");
+
+            vm.ToggleShowClock();
+            clock.Visibility.Should().Be(Visibility.Visible);
+
+            vm.ToggleShowClock();
+            clock.Visibility.Should().Be(Visibility.Collapsed);
+        });
+    }
+
+    [Fact]
+    public void ShowClock_IsPersistedPerBoxAndDefaultsToOff()
+    {
+        var vm = new BoxViewModel(new Box { Name = "B" });
+        vm.ShowClock.Should().BeFalse();
+        vm.ToModel().ShowClock.Should().BeFalse();
+
+        vm.ToggleShowClock();
+        vm.ToModel().ShowClock.Should().BeTrue();
+        new BoxViewModel(vm.ToModel()).ShowClock.Should().BeTrue();
+
+        var path = Path.Combine(Path.GetTempPath(), $"dbx_clock_{Guid.NewGuid():N}.json");
+        new JsonStoreService(path).Save(new AppConfig
+        {
+            Boxes = new() { new Box { Name = "带时钟", ShowClock = true } }
+        });
+        new JsonStoreService(path).Load().Boxes[0].ShowClock.Should().BeTrue();
+
+        var legacy = Path.Combine(Path.GetTempPath(), $"dbx_clock_legacy_{Guid.NewGuid():N}.json");
+        File.WriteAllText(legacy, @"{""boxes"":[{""name"":""旧盒子""}]}");
+        new JsonStoreService(legacy).Load().Boxes[0].ShowClock.Should().BeFalse("旧配置默认不显示时间");
+    }
+
+    [Fact]
+    public void BoxContextMenu_TogglesTheClockForThatBoxOnly()
+    {
+        var xaml = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml");
+        xaml.Should().Contain("Header=\"{DynamicResource box.menu.showClock}\" Click=\"OnToggleShowClock\"");
+        xaml.Should().Contain("IsCheckable=\"True\" IsChecked=\"{Binding ShowClock, Mode=OneWay}\"");
+
+        var code = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml.cs");
+        code.Should().Contain("private void OnToggleShowClock");
+        code.Should().Contain("Vm.ToggleShowClock();");
+        code.Should().Contain("MainVm.ScheduleSave();");
+
+        foreach (var file in new[] { "Strings.zh-CN.xaml", "Strings.en-US.xaml" })
+            ReadRepositoryFile("src", "DesktopBox", "Resources", file).Should().Contain("x:Key=\"box.menu.showClock\"");
     }
 
     private static void Arrange(FrameworkElement element)

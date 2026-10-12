@@ -30,6 +30,10 @@ public class Box
 
     /// <summary>是否锁定位置。持久化。锁定后不能拖动/缩放,避免误移动(卷起、悬停展开不受影响)。</summary>
     public bool IsLocked { get; set; }
+
+    /// <summary>是否在标题栏显示时间(时钟)。持久化,默认关闭——避免所有盒子都显示时间。
+    /// 需要看时间的盒子在右键菜单里单独勾选「显示时间」。</summary>
+    public bool ShowClock { get; set; }
 }
 
 /// <summary>标签盒子里的一个标签页。Name 可观察(重命名时 UI 自动刷新)。</summary>
