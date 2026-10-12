@@ -681,6 +681,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
         DesktopIconsVisible = visible;
     }
 
+    /// <summary>确保桌面图标可见。用于"把条目拖到桌面上"之后:文件本来就一直在桌面,
+    /// 但桌面图标处于隐藏状态时它在桌面上看不见、像被删了,所以这里自动把图标显示出来。
+    /// 纯视觉开关,不动任何文件;返回是否真的切换过。</summary>
+    public bool EnsureDesktopIconsVisible()
+    {
+        if (DesktopIconsVisible) return false;
+
+        _desktopIcons.SetVisible(true);
+        DesktopIconsVisible = true;
+        Services.LogService.Info("DesktopIcons.ForceShow", "拖出到桌面后自动显示桌面图标");
+        return true;
+    }
+
     /// <summary>启动后读取真实状态,刷新按钮颜色。</summary>
     public void RefreshDesktopIconsState() => DesktopIconsVisible = _desktopIcons.AreIconsVisible;
 

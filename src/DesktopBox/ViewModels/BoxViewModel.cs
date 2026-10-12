@@ -13,8 +13,8 @@ public partial class BoxViewModel : ObservableObject
     public Guid Id { get; }
 
     [ObservableProperty] private string _name;
-    /// <summary>程序生成盒子的稳定标识(box.organize / box.sysicons);用户手建为 null。逻辑匹配用 Key。</summary>
-    public string? Key { get; }
+    /// <summary>程序生成盒子的稳定标识(box.organize / box.sysicons);用户手建或用户改名后为 null。逻辑匹配用 Key。</summary>
+    public string? Key { get; private set; }
     [ObservableProperty] private double _x;
     [ObservableProperty] private double _y;
     [ObservableProperty] private double _width;
@@ -190,6 +190,19 @@ public partial class BoxViewModel : ObservableObject
 
     /// <summary>语言切换后重算 Header(触发 PropertyChanged)。</summary>
     public void RefreshHeader() => OnPropertyChanged(nameof(Header));
+
+    // 名称变化要通知 Header:界面显示的是 Header,不通知的话"改了名界面还是旧名字"(线上问题)。
+    partial void OnNameChanged(string value) => OnPropertyChanged(nameof(Header));
+
+    /// <summary>用户改名:显示名以用户输入为准。
+    /// 同时清掉 Key —— 程序生成的盒子(box.organize 等)的 Header 走语言翻译,不清 Key 的话
+    /// 改完名界面仍显示原来的翻译名,看起来"改不动"。</summary>
+    public void Rename(string name)
+    {
+        Key = null;
+        Name = name;
+        OnPropertyChanged(nameof(Header));   // 名称恰好没变时也要刷新(Key 刚被清掉)
+    }
 
     // ---- 视图模式:统一用全局(MainViewModel.GlobalViewMode),所有盒子/标签一致 ----
     // ViewMode 字段保留为"当前视图"的只读镜像,IsLarge 等基于它;由 MainViewModel 广播刷新。

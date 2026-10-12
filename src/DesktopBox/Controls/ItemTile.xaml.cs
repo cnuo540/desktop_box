@@ -96,7 +96,13 @@ public partial class ItemTile : UserControl
         }
 
         if (desktopDrop?.DroppedOnDesktop == true && ReferenceEquals(Item, item))
+        {
+            // 拖到桌面 = 把这个条目从盒子里移除(文件本来就在桌面原地,只是不再由盒子显示)。
+            // 若桌面图标正处于隐藏状态,它在桌面上根本看不见、像是被删掉了 —— 先确保图标显示出来。
+            try { vm.EnsureDesktopIconsVisible(); }
+            catch (Exception ex) { App.LogError(ex, "ItemTile.EnsureDesktopIconsVisible"); }
             RemoveFromBox();
+        }
         e.Handled = true;
     }
 

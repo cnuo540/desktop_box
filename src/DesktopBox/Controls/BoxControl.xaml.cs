@@ -561,7 +561,8 @@ public partial class BoxControl : UserControl
     {
         if (Vm is null) return;
         var newName = InputDialog.Prompt(Localizer["dialog.renameBox.title"], Localizer["dialog.renameBox.prompt"], Vm.Name);
-        if (!string.IsNullOrWhiteSpace(newName)) Vm.Name = newName.Trim();
+        if (string.IsNullOrWhiteSpace(newName)) return;
+        Vm.Rename(newName.Trim());   // 走 Rename:改名 + 脱离程序生成身份(否则界面仍显示原来的翻译名)
         MainVm.ScheduleSave();
     }
 
@@ -616,9 +617,10 @@ public partial class BoxControl : UserControl
 
     private void OnRenameTab(object sender, RoutedEventArgs e)
     {
-        if (Vm is null || Vm.SelectedTab is null) return;
-        var name = InputDialog.Prompt(Localizer["box.menu.renameTab"], Localizer["dialog.renameBox.prompt"], Vm.SelectedTab.Name);
-        if (!string.IsNullOrWhiteSpace(name)) Vm.SelectedTab.Name = name.Trim();
+        if (Vm?.SelectedTab is not { } tab) return;
+        var name = InputDialog.Prompt(Localizer["box.menu.renameTab"], Localizer["dialog.renameBox.prompt"], tab.Name);
+        if (string.IsNullOrWhiteSpace(name)) return;
+        tab.Rename(name.Trim());     // 走 Rename:改名 + 清掉分类 Key(否则分类标签改名后仍是原翻译名)
         MainVm.ScheduleSave();
     }
 

@@ -41,7 +41,7 @@ public partial class BoxTab : ObservableObject
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     [ObservableProperty] private string _name = "标签";
-    /// <summary>程序生成标签的稳定标识(如 cat.apps / tab.sysicons);用户手建为 null。</summary>
+    /// <summary>程序生成标签的稳定标识(如 cat.apps / tab.sysicons);用户手建或用户改名后为 null。</summary>
     public string? Key { get; set; }
     public ObservableCollection<BoxItem> Items { get; set; } = new();
 
@@ -61,4 +61,15 @@ public partial class BoxTab : ObservableObject
 
     /// <summary>语言切换后重算 Header(触发 PropertyChanged)。</summary>
     public void RefreshHeader() => OnPropertyChanged(nameof(Header));
+
+    // 名称变化要通知 Header:标签行绑定的是 Header,不通知的话"改了标签名还是旧名字"。
+    partial void OnNameChanged(string value) => OnPropertyChanged(nameof(Header));
+
+    /// <summary>用户改名:显示名以用户输入为准,并清掉 Key(否则分类标签改名后仍显示原来的翻译名)。</summary>
+    public void Rename(string name)
+    {
+        Key = null;
+        Name = name;
+        OnPropertyChanged(nameof(Header));
+    }
 }

@@ -80,6 +80,7 @@
                     </TextBlock>
 
                     <TextBlock Grid.Column="1"
+                               x:Name="HeaderTitle"
                                Text="{Binding Header}"
                                FontWeight="SemiBold"
                                FontSize="13"
