@@ -21,6 +21,71 @@ public partial class BoxViewModel : ObservableObject
     [ObservableProperty] private double _height;
     [ObservableProperty] private string? _accentColor;
 
+    /// <summary>是否卷起(只剩标题栏)。持久化到 boxes.json。</summary>
+    [ObservableProperty] private bool _isCollapsed;
+
+    /// <summary>鼠标悬停触发的临时展开。不持久化:鼠标移开后自动恢复卷起。</summary>
+    [ObservableProperty] private bool _isHoverExpanded;
+
+    /// <summary>卷起后保留的标题栏高度(像素),由 BoxControl 按标题栏实测高度回填。</summary>
+    [ObservableProperty] private double _collapsedHeight = BoxCollapse.DefaultHeaderHeight;
+
+    /// <summary>当前是否按卷起态渲染(卷起且未悬停展开)。</summary>
+    public bool IsRolled => BoxCollapse.IsRolled(IsCollapsed, IsHoverExpanded);
+
+    /// <summary>窗口/内容应使用的高度:卷起时=标题栏高度,否则=用户设定的高度。
+    /// 盒子宿主窗口(BoxWindow)按这个值设置 HWND 高度,所以卷起/展开只改高度、不动 X/Y。</summary>
+    public double RenderHeight => BoxCollapse.RenderHeight(IsCollapsed, IsHoverExpanded, Height, CollapsedHeight);
+
+    /// <summary>是否显示标题栏之外的内容(标签行 + 条目区)。</summary>
+    public bool ShowContent => !IsRolled;
+
+    /// <summary>是否显示标签行:标签盒子且非卷起态。</summary>
+    public bool ShowTabs => IsTabbed && ShowContent;
+
+    /// <summary>卷起/展开按钮的提示文本:随当前语言与卷起状态变化(卷起时提示"展开盒子")。</summary>
+    public string CollapseActionText
+    {
+        get
+        {
+            try
+            {
+                var loc = App.Services.GetRequiredService<ILocalizerService>();
+                return loc[IsCollapsed ? "tip.expandBox" : "tip.rollUp"];
+            }
+            catch
+            {
+                // 无 DI 容器时(设计器/单元测试直接构造 VM):提示退化为英文兜底,不影响卷起功能本身。
+                return IsCollapsed ? "Expand box" : "Roll up box";
+            }
+        }
+    }
+
+    /// <summary>语言切换后重算 CollapseActionText(触发 PropertyChanged)。</summary>
+    public void RefreshCollapseActionText() => OnPropertyChanged(nameof(CollapseActionText));
+
+    partial void OnIsCollapsedChanged(bool value) => RefreshCollapseState();
+
+    partial void OnIsHoverExpandedChanged(bool value) => RefreshCollapseState();
+
+    partial void OnCollapsedHeightChanged(double value) => RefreshCollapseState();
+
+    // 高度变化会改变 RenderHeight(展开态下),通知出去让宿主窗口跟着改 HWND 高度。
+    partial void OnHeightChanged(double value) => OnPropertyChanged(nameof(RenderHeight));
+
+    /// <summary>重新计算并通知所有卷起态相关属性(宿主窗口监听 RenderHeight 来改 HWND 高度)。</summary>
+    private void RefreshCollapseState()
+    {
+        OnPropertyChanged(nameof(IsRolled));
+        OnPropertyChanged(nameof(RenderHeight));
+        OnPropertyChanged(nameof(ShowContent));
+        OnPropertyChanged(nameof(ShowTabs));
+        OnPropertyChanged(nameof(CollapseActionText));
+    }
+
+    /// <summary>卷起/展开切换(用户操作,持久化由调用方 ScheduleSave)。</summary>
+    public void ToggleCollapsed() => IsCollapsed = !IsCollapsed;
+
     public ObservableCollection<BoxItem> Items { get; } = new();
     public ObservableCollection<BoxTab> Tabs { get; } = new();
 
@@ -108,6 +173,7 @@ public partial class BoxViewModel : ObservableObject
         _width = model.Width; _height = model.Height;
         _accentColor = model.AccentColor;
         _viewMode = model.ViewMode;
+        _isCollapsed = model.IsCollapsed;
         foreach (var i in model.Items) Items.Add(i);
         foreach (var t in model.Tabs) Tabs.Add(t);
         if (Tabs.Count > 0) _selectedTab = Tabs[0];
@@ -120,6 +186,7 @@ public partial class BoxViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(IsTabbed));
         OnPropertyChanged(nameof(DisplayItems));
+        OnPropertyChanged(nameof(ShowTabs));
         if (SelectedTab is null || !Tabs.Contains(SelectedTab))
             SelectedTab = Tabs.FirstOrDefault();
     }
@@ -156,6 +223,7 @@ public partial class BoxViewModel : ObservableObject
         Height = Height,
         AccentColor = AccentColor,
         ViewMode = ViewMode,
+        IsCollapsed = IsCollapsed,
         Items = new(Items),
         Tabs = new(Tabs)
     };

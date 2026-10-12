@@ -43,11 +43,15 @@
     <s:String x:Key="box.menu.toTabbed">转为标签盒子</s:String>
     <s:String x:Key="box.menu.mergeIn">合并其它盒子进来…</s:String>
     <s:String x:Key="box.menu.split">拆分为独立盒子</s:String>
+    <s:String x:Key="box.menu.rollUp">卷起盒子</s:String>
+    <s:String x:Key="box.menu.expandBox">展开盒子</s:String>
     <s:String x:Key="box.menu.delete">删除盒子</s:String>
 
     <!-- tooltip -->
     <s:String x:Key="tip.toggleIcons">显示/隐藏桌面图标</s:String>
     <s:String x:Key="tip.newTab">新建标签</s:String>
+    <s:String x:Key="tip.rollUp">卷起盒子(鼠标悬停时自动展开)</s:String>
+    <s:String x:Key="tip.expandBox">展开盒子</s:String>
 
     <!-- 设置 -->
     <s:String x:Key="settings.title">DesktopBox 设置</s:String>
@@ -56,6 +60,7 @@
     <s:String x:Key="settings.followTheme">跟随系统深浅色</s:String>
     <s:String x:Key="settings.theme">主题:</s:String>
     <s:String x:Key="settings.language">语言:</s:String>
+    <s:String x:Key="settings.hoverExpand">卷起的盒子鼠标悬停时自动展开</s:String>
     <s:String x:Key="lang.auto">自动(跟随系统)</s:String>
     <s:String x:Key="lang.zh-CN">简体中文</s:String>
     <s:String x:Key="lang.en-US">English</s:String>

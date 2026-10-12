@@ -51,6 +51,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>切换全局视图模式(由 BoxControl 右键菜单调用)。</summary>
     public void SetGlobalViewMode(ViewMode mode) => GlobalViewMode = mode;
 
+    /// <summary>卷起的盒子在鼠标悬停时自动展开、移开自动收起(设置项,持久化)。
+    /// BoxControl 在鼠标进出时读取本值;关掉后卷起的盒子只能双击标题栏/右键菜单展开。</summary>
+    [ObservableProperty] private bool _hoverExpandCollapsedBoxes = true;
+
+    partial void OnHoverExpandCollapsedBoxesChanged(bool value) => ScheduleSave();
+
     /// <summary>把新建/加载的盒子加入集合并同步当前全局视图模式。</summary>
     private void AddBoxSynced(BoxViewModel box)
     {
@@ -100,6 +106,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Boxes.Clear();
         var cfg = _store.Load();
         GlobalViewMode = cfg.Settings.GlobalViewMode;
+        HoverExpandCollapsedBoxes = cfg.Settings.HoverExpandCollapsedBoxes;
 
         // 迁移系统图标 item 的旧 CLSID → SystemIcons.cs 当前定义。
         // 历史遗留:旧版用过的 CLSID(如网络曾是 F02C2A56,在 Win11 上已无效)仍存在老 boxes.json 里,
@@ -834,6 +841,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var existing = _store.Load();
             var cfg = new AppConfig { Settings = existing.Settings };
             cfg.Settings.GlobalViewMode = GlobalViewMode;
+            cfg.Settings.HoverExpandCollapsedBoxes = HoverExpandCollapsedBoxes;
             int order = 0;
             // 快照:避免后台线程枚举时集合被 UI 线程修改
             foreach (var b in Boxes.ToList())
@@ -870,6 +878,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         foreach (var b in Boxes)
         {
             b.RefreshHeader();
+            b.RefreshCollapseActionText();
             foreach (var t in b.Tabs) t.RefreshHeader();
         }
     }

@@ -23,6 +23,10 @@ public class Box
 
     /// <summary>标签模式:非空时盒子显示为多标签页(Tabs 优先于 Items)。</summary>
     public List<BoxTab> Tabs { get; set; } = new();
+
+    /// <summary>是否卷起(折叠成只剩标题栏)。持久化。
+    /// 卷起的盒子在鼠标悬停时会临时展开(见 BoxCollapse/BoxViewModel.IsHoverExpanded),移开后自动恢复卷起。</summary>
+    public bool IsCollapsed { get; set; }
 }
 
 /// <summary>标签盒子里的一个标签页。Name 可观察(重命名时 UI 自动刷新)。</summary>

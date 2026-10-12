@@ -35,7 +35,7 @@ public sealed class BoxWindow : IDisposable
             PositionX = clientPosition.X,
             PositionY = clientPosition.Y,
             Width = Math.Max(1, (int)Math.Round(box.Width)),
-            Height = Math.Max(1, (int)Math.Round(box.Height)),
+            Height = Math.Max(1, (int)Math.Round(box.RenderHeight)),
             UsesPerPixelOpacity = false
         };
 
@@ -105,7 +105,7 @@ public sealed class BoxWindow : IDisposable
                 clientPosition.X,
                 clientPosition.Y,
                 Math.Max(1, (int)Math.Round(Box.Width)),
-                Math.Max(1, (int)Math.Round(Box.Height)),
+                Math.Max(1, (int)Math.Round(Box.RenderHeight)),
                 Native.User32.SWP_CROSSPROC);
         }
         catch (Exception ex)
@@ -121,10 +121,29 @@ public sealed class BoxWindow : IDisposable
         if (_disposed || _source.IsDisposed)
             return;
 
-        if (e.PropertyName is nameof(BoxViewModel.X) or nameof(BoxViewModel.Y) or nameof(BoxViewModel.Width) or nameof(BoxViewModel.Height))
+        if (e.PropertyName is nameof(BoxViewModel.X) or nameof(BoxViewModel.Y) or nameof(BoxViewModel.Width)
+            or nameof(BoxViewModel.Height) or nameof(BoxViewModel.RenderHeight))
             MoveResize(Native.User32.HWND_TOP);
         else if (e.PropertyName == nameof(BoxViewModel.Header))
             Native.User32.SetWindowText(_handle, Box.Header);
+        else if (e.PropertyName == nameof(BoxViewModel.IsHoverExpanded))
+            RaiseToTop();
+    }
+
+    /// <summary>把窗口提到兄弟窗口最上层。仅在悬停展开这类状态切换时调一次:
+    /// 逐帧 HWND_TOP 会逼桌面图标层重排(缩放闪烁的根因),所以不能放进 MoveResize 的逐帧路径。</summary>
+    private void RaiseToTop()
+    {
+        if (_disposed || _source.IsDisposed)
+            return;
+        try
+        {
+            MoveResizeCore(Native.User32.HWND_TOP, 0, force: true);
+        }
+        catch (Exception ex)
+        {
+            Services.LogService.Error(ex, "BoxWindow.RaiseToTop");
+        }
     }
 
     private void MoveResize(IntPtr insertAfter)
@@ -167,7 +186,7 @@ public sealed class BoxWindow : IDisposable
 
         var scale = GetDpiScale();
         var contentW = Math.Max(1, Box.Width / scale.X);
-        var contentH = Math.Max(1, Box.Height / scale.Y);
+        var contentH = Math.Max(1, Box.RenderHeight / scale.Y);
         if (contentW != _lastContentW || contentH != _lastContentH)
         {
             _lastContentW = contentW;
@@ -178,7 +197,7 @@ public sealed class BoxWindow : IDisposable
         var parent = Native.User32.GetParent(_handle);
         var clientPosition = Native.User32.ScreenPointToClient(parent, Box.X, Box.Y);
         int w = Math.Max(1, (int)Math.Round(Box.Width));
-        int h = Math.Max(1, (int)Math.Round(Box.Height));
+        int h = Math.Max(1, (int)Math.Round(Box.RenderHeight));
         // 去重：四角缩放时 X/Y/W/H 四个属性各触发一次 MoveResize，圆整后矩形常常无变化；
         // 空刷一次跨进程 SetWindowPos 就逼图标层重绘一次，闪烁就是这么来的。
         if (clientPosition.X == _lastX && clientPosition.Y == _lastY && w == _lastW && h == _lastH)

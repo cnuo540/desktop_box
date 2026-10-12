@@ -1,6 +1,7 @@
 using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DesktopBox.Services;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DesktopBox.ViewModels;
 
@@ -29,6 +30,30 @@ public partial class SettingsViewModel : ObservableObject
         get => Language switch { "zh-CN" => 1, "en-US" => 2, _ => 0 };
         set => Language = value switch { 1 => "zh-CN", 2 => "en-US", _ => "auto" };
     }
+
+    /// <summary>卷起盒子的悬停自动展开开关。状态与持久化都归 MainViewModel(BoxControl 运行时读同一个值),
+    /// 这里只做设置界面的双向代理:勾选即时生效并自动保存。</summary>
+    public bool HoverExpandCollapsedBoxes
+    {
+        get => Main.HoverExpandCollapsedBoxes;
+        set
+        {
+            if (Main.HoverExpandCollapsedBoxes == value) return;
+            try
+            {
+                Main.HoverExpandCollapsedBoxes = value;
+                OnPropertyChanged();
+            }
+            catch (Exception ex)
+            {
+                ReportPersistenceFailure(ex);
+            }
+        }
+    }
+
+    private MainViewModel? _main;
+    private MainViewModel Main =>
+        _main ??= App.Services.GetRequiredService<MainViewModel>();
 
     public SettingsViewModel(IStartupService startup, IThemeService theme, IPersistenceService store, ILocalizerService localizer)
     {

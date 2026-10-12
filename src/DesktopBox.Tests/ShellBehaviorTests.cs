@@ -106,7 +106,8 @@ public class ShellBehaviorTests
 
         source.Should().Contain("TransformToDevice");
         source.Should().Contain("Box.Width / scale.X");
-        source.Should().Contain("Box.Height / scale.Y");
+        // 高度按 RenderHeight(卷起时=标题栏高度)换算,不再直接用 Box.Height
+        source.Should().Contain("Box.RenderHeight / scale.Y");
     }
 
     [Fact]

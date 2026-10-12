@@ -42,7 +42,11 @@ public partial class BoxControl : UserControl
         Loaded += (_, _) =>
         {
             try { WpfUiAnimationGuard.UnfreezeSubtree(this); } catch { }
+            UpdateCollapsedHeight();   // 标题栏实测高度(DPI/字号自适应)回填给 VM
         };
+        // 标题栏高度会随 DPI 缩放/系统字号/语言字体变化:持续跟随,保证卷起时刚好只剩标题栏。
+        HeaderBar.SizeChanged += (_, _) => UpdateCollapsedHeight();
+        Unloaded += (_, _) => StopHoverTimer();
         DataContextChanged += (_, _) =>
         {
             if (_subscribedVm is not null)
@@ -56,9 +60,89 @@ public partial class BoxControl : UserControl
 
     private BoxViewModel? Vm => DataContext as BoxViewModel;
 
-    private void OnBoxMouseEnter(object sender, MouseEventArgs e) => KeyboardNavigator.Activate(this);
+    private void OnBoxMouseEnter(object sender, MouseEventArgs e)
+    {
+        KeyboardNavigator.Activate(this);
+        ScheduleHoverExpand(true);
+    }
 
-    private void OnBoxMouseLeave(object sender, MouseEventArgs e) => KeyboardNavigator.Deactivate(this);
+    private void OnBoxMouseLeave(object sender, MouseEventArgs e)
+    {
+        KeyboardNavigator.Deactivate(this);
+        ScheduleHoverExpand(false);
+    }
+
+    // ---- 卷起 / 悬停自动展开 ----
+    private DispatcherTimer? _hoverTimer;
+
+    /// <summary>鼠标进入/离开后延时切换卷起态。
+    /// 延时是为了不被"鼠标划过"或"在标题栏与条目之间移动时的瞬时出界"打断:
+    /// 进入 180ms 后展开、离开 320ms 后收起(见 BoxCollapse)。</summary>
+    private void ScheduleHoverExpand(bool expand)
+    {
+        if (Vm is null) return;
+        var vm = Vm;
+        if (expand)
+        {
+            if (!BoxCollapse.ShouldExpandOnHover(vm.IsCollapsed, vm.IsHoverExpanded, MainVm.HoverExpandCollapsedBoxes))
+                return;
+        }
+        else if (!BoxCollapse.ShouldCollapseOnLeave(vm.IsHoverExpanded))
+        {
+            return;
+        }
+
+        StopHoverTimer();
+        var timer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(expand ? BoxCollapse.HoverExpandDelayMs : BoxCollapse.HoverCollapseDelayMs)
+        };
+        timer.Tick += (_, _) =>
+        {
+            StopHoverTimer();
+            if (!ReferenceEquals(vm, Vm)) return;   // DataContext 已换(窗口复用/回收)
+            // 展开前复核鼠标仍在盒子内:延时期间已移开就放弃,否则会出现"鼠标走了它自己弹开"。
+            if (expand && !IsMouseOver) return;
+            vm.IsHoverExpanded = expand;
+        };
+        _hoverTimer = timer;
+        timer.Start();
+    }
+
+    private void StopHoverTimer()
+    {
+        var timer = _hoverTimer;
+        _hoverTimer = null;
+        timer?.Stop();
+    }
+
+    /// <summary>卷起/展开切换(持久化)。手动切换时清掉悬停临时态,避免两种状态打架。</summary>
+    private void ToggleCollapse()
+    {
+        if (Vm is null) return;
+        StopHoverTimer();
+        Vm.IsHoverExpanded = false;
+        Vm.ToggleCollapsed();
+        MainVm.ScheduleSave();
+    }
+
+    private void OnToggleCollapse(object sender, RoutedEventArgs e) => ToggleCollapse();
+
+    /// <summary>把"标题栏实测高度 + 卡片边框(物理像素)"写回 VM,作为卷起后的窗口高度。
+    /// 写死常量在 DPI 缩放/系统字号下会裁掉标题或露出一截内容,所以实测回填。</summary>
+    private void UpdateCollapsedHeight()
+    {
+        if (Vm is null) return;
+        var contentHeight = HeaderBar.ActualHeight;
+        if (contentHeight <= 0) return;   // 尚未完成布局
+
+        var border = Card.BorderThickness.Top + Card.BorderThickness.Bottom;
+        var scale = GetDpiScale();
+        // 尺寸换算:模型用的是物理像素,而 WPF 布局用 DIP(物理/缩放)。
+        var measured = Math.Round((contentHeight + border) * scale.Y);
+        if (measured <= 0 || Math.Abs(measured - Vm.CollapsedHeight) < 0.5) return;
+        Vm.CollapsedHeight = measured;
+    }
 
     public bool NavigateByFirstLetter(char key)
     {
@@ -105,7 +189,14 @@ public partial class BoxControl : UserControl
     // ---- 拖动盒子 ----
     private void OnHeaderDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount >= 2 || Vm is null) return;
+        if (Vm is null) return;
+        // 双击标题栏 = 卷起/展开(悬停展开是临时态,双击是用户明确的持久切换)。
+        if (e.ClickCount >= 2)
+        {
+            ToggleCollapse();
+            e.Handled = true;
+            return;
+        }
         _isDragging = true;
         _dragOrigin = PointToScreen(e.GetPosition(this));
         _boxOrigin = new Point(Vm.X, Vm.Y);   // 记录起点:拖动期间意图位置=起点+累积位移

@@ -31,8 +31,10 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- 标题栏:鼠标按下可拖动整个盒子 -->
-            <Border Grid.Row="0" Background="#66000000"
+            <!-- 标题栏:鼠标按下可拖动整个盒子;双击=卷起/展开 -->
+            <Border Grid.Row="0"
+                    x:Name="HeaderBar"
+                    Background="#66000000"
                     Padding="12,8"
                     MouseLeftButtonDown="OnHeaderDown"
                     MouseMove="OnHeaderMove"
@@ -41,6 +43,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Rectangle Grid.Column="0" Width="10" Height="10" RadiusX="2" RadiusY="2" Fill="#4FC3F7" Margin="0,0,8,0"/>
@@ -51,8 +54,33 @@
                                Foreground="White"
                                VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
-                    <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
+                    <!-- 卷起/展开按钮:展开时显示向上箭头(点了就卷起),卷起时显示向下箭头。
+                         卷起后鼠标悬停会自动展开(可在设置里关掉)。 -->
                     <Button Grid.Column="2"
+                            x:Name="CollapseBtn"
+                            Click="OnToggleCollapse"
+                            ToolTip="{Binding CollapseActionText}"
+                            Width="24" Height="24" Margin="6,0,0,0" Padding="0"
+                            Background="Transparent"
+                            BorderBrush="#66FFFFFF"
+                            Cursor="Hand">
+                        <Path Width="12" Height="7" Stretch="Uniform"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Stroke="White" StrokeThickness="1.8">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Data" Value="M1,7 L6,1 L11,7"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                            <Setter Property="Data" Value="M1,1 L6,7 L11,1"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                    </Button>
+                    <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
+                    <Button Grid.Column="3"
                             x:Name="ToggleIconsBtn"
                             Click="OnToggleDesktopIcons"
                             ToolTip="{DynamicResource tip.toggleIcons}"
@@ -71,9 +99,10 @@
                 </Grid>
             </Border>
 
-            <!-- 标签行(仅标签模式可见) -->
+            <!-- 标签行(仅标签模式且非卷起时可见) -->
             <Grid Grid.Row="1"
-                  Visibility="{Binding IsTabbed, Converter={StaticResource BoolVis}}"
+                  x:Name="TabRow"
+                  Visibility="{Binding ShowTabs, Converter={StaticResource BoolVis}}"
                   Background="#33000000">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -197,9 +226,10 @@
                         Click="OnAddTab" ToolTip="{DynamicResource tip.newTab}"/>
             </Grid>
 
-            <!-- 条目列表(当前标签 / Items):按 ViewMode 切换布局 -->
+            <!-- 条目列表(当前标签 / Items):按 ViewMode 切换布局。卷起时整块隐藏,只留标题栏 -->
             <ScrollViewer x:Name="ItemsScroll"
                           Grid.Row="2"
+                          Visibility="{Binding ShowContent, Converter={StaticResource BoolVis}}"
                           VerticalScrollBarVisibility="Visible"
                           HorizontalScrollBarVisibility="Disabled"
                           Background="Transparent"
@@ -276,8 +306,10 @@
                 </Grid>
             </ScrollViewer>
 
-            <!-- 八方向缩放手柄:覆盖卡片边缘。中间透明区域 hit-test 穿透到下层,不影响交互。 -->
-            <Grid Grid.Row="0" Grid.RowSpan="3" Margin="0">
+            <!-- 八方向缩放手柄:覆盖卡片边缘。中间透明区域 hit-test 穿透到下层,不影响交互。
+                 卷起时不显示(只剩标题栏,没有可缩放的内容区)。 -->
+            <Grid Grid.Row="0" Grid.RowSpan="3" Margin="0"
+                  Visibility="{Binding ShowContent, Converter={StaticResource BoolVis}}">
                 <Grid.Resources>
                     <Style TargetType="Thumb">
                         <Setter Property="Background" Value="Transparent"/>
@@ -332,6 +364,33 @@
                 <MenuItem Header="{DynamicResource view.tile}" Click="OnViewTile" IsCheckable="True"
                           IsChecked="{Binding ViewMode, Converter={StaticResource ModeEqual}, ConverterParameter={x:Static m:ViewMode.Tile}, Mode=OneWay}"/>
             </MenuItem>
+            <!-- 卷起/展开:卷起后鼠标悬停会自动展开、移开自动收起(可在设置里关闭)。
+                 两个菜单项按当前状态二选一显示,动词与即将发生的动作一致。 -->
+            <MenuItem Header="{DynamicResource box.menu.rollUp}" Click="OnToggleCollapse">
+                <MenuItem.Style>
+                    <Style TargetType="MenuItem">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </MenuItem.Style>
+            </MenuItem>
+            <MenuItem Header="{DynamicResource box.menu.expandBox}" Click="OnToggleCollapse">
+                <MenuItem.Style>
+                    <Style TargetType="MenuItem">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCollapsed}" Value="True">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </MenuItem.Style>
+            </MenuItem>
+            <Separator/>
             <MenuItem Header="{DynamicResource box.menu.rename}" Click="OnRename"/>
             <MenuItem Header="{DynamicResource box.menu.removeSelected}" Click="OnRemoveSelected"/>
             <MenuItem Header="{DynamicResource box.menu.refreshItems}" Click="OnRefreshItems"/>

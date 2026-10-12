@@ -38,10 +38,14 @@
     <s:String x:Key="box.menu.toTabbed">Convert to Tabbed Box</s:String>
     <s:String x:Key="box.menu.mergeIn">Merge Another Box…</s:String>
     <s:String x:Key="box.menu.split">Split into Boxes</s:String>
+    <s:String x:Key="box.menu.rollUp">Roll Up Box</s:String>
+    <s:String x:Key="box.menu.expandBox">Expand Box</s:String>
     <s:String x:Key="box.menu.delete">Delete Box</s:String>
 
     <s:String x:Key="tip.toggleIcons">Show/Hide Desktop Icons</s:String>
     <s:String x:Key="tip.newTab">New Tab</s:String>
+    <s:String x:Key="tip.rollUp">Roll up box (auto-expands on hover)</s:String>
+    <s:String x:Key="tip.expandBox">Expand box</s:String>
 
     <s:String x:Key="settings.title">DesktopBox Settings</s:String>
     <s:String x:Key="settings.general">General</s:String>
@@ -49,6 +53,7 @@
     <s:String x:Key="settings.followTheme">Follow System Theme</s:String>
     <s:String x:Key="settings.theme">Theme:</s:String>
     <s:String x:Key="settings.language">Language:</s:String>
+    <s:String x:Key="settings.hoverExpand">Auto-expand rolled-up boxes on hover</s:String>
     <s:String x:Key="lang.auto">Auto (follow system)</s:String>
     <s:String x:Key="lang.zh-CN">简体中文</s:String>
     <s:String x:Key="lang.en-US">English</s:String>
