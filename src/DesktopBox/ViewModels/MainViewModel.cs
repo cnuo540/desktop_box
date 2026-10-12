@@ -23,6 +23,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly ICategorizerService _categorizer;
     private readonly IDesktopIconsService _desktopIcons;
     private readonly IDesktopIconLayoutService? _iconLayout;
+    /// <summary>是否启用"按项隐藏"(见 AppSettings.UsePerItemIconHiding,默认关)。</summary>
+    private bool _perItemIconHiding;
     private readonly ILocalizerService _localizer;
     private readonly IShellChangeNotifierService _shellChange;
     private Timer? _debounce;
@@ -111,6 +113,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         Boxes.Clear();
         var cfg = _store.Load();
+        _perItemIconHiding = cfg.Settings.UsePerItemIconHiding;
         GlobalViewMode = cfg.Settings.GlobalViewMode;
         HoverExpandCollapsedBoxes = cfg.Settings.HoverExpandCollapsedBoxes;
 
@@ -677,6 +680,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>当前桌面图标是否可见(可观察:按钮颜色据此变化)。</summary>
     [ObservableProperty] private bool _desktopIconsVisible = true;
 
+    /// <summary>按项隐藏是否可用:服务已注入 + 配置开关打开(默认关,见 AppSettings.UsePerItemIconHiding)。
+    /// 关着时一律走系统整层开关 —— 不碰桌面视图 COM。</summary>
+    private bool PerItemHidingAvailable => _iconLayout is not null && _perItemIconHiding;
+
     [RelayCommand]
     private void ToggleDesktopIcons() => SetDesktopIconsVisible(!DesktopIconsVisible);
 
@@ -685,9 +692,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// 未收纳的项、你在桌面上新建的文件夹都不受影响,照常可见。</summary>
     public void SetDesktopIconsVisible(bool visible)
     {
-        if (_iconLayout is null)
+        var layout = PerItemHidingAvailable ? _iconLayout : null;
+        if (layout is null)
         {
-            // 没有按项隐藏能力时退回旧的整层开关:功能不缺失(只是会连同未收纳的一起隐藏)
+            // 按项隐藏未启用/不可用 → 走系统整层开关(稳定,已长期验证)
             _desktopIcons.SetVisible(visible);
             DesktopIconsVisible = visible;
             return;
@@ -697,8 +705,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             if (visible)
             {
-                _iconLayout.RestoreAll();
-                _iconLayout.SetSystemIconsVisible(true);
+                layout.RestoreAll();
+                layout.SetSystemIconsVisible(true);
                 _desktopIcons.SetVisible(true);   // 兜底:可能正处于"整层隐藏"的降级状态
             }
             else
@@ -706,7 +714,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 var candidates = CollectedDesktopPaths()
                     .Where(DesktopIconLayoutService.IsDesktopItem)
                     .ToList();
-                var parked = _iconLayout.Park(candidates);
+                var parked = layout.Park(candidates);
 
                 // 按项隐藏不可用(例如环境不允许跨进程 COM)→ 退回整层开关,至少保持"桌面干净"。
                 // 注意:Park 只会"读到原位置才挪",所以这条路上绝不会把用户的图标挪乱。
@@ -717,12 +725,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         $"per-item park moved 0 of {candidates.Count} → global hide");
                 }
 
-                _iconLayout.SetSystemIconsVisible(false);
+                layout.SetSystemIconsVisible(false);
             }
 
             DesktopIconsVisible = visible;
             PersistIconHiding(visible);
-            Services.LogService.Info("DesktopIcons.Set", $"visible={visible} parked={_iconLayout.ParkedCount}");
+            Services.LogService.Info("DesktopIcons.Set", $"visible={visible} parked={layout.ParkedCount}");
         }
         catch (Exception ex)
         {
@@ -734,7 +742,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// (旧版调系统整层开关,升级后要换成"只隐藏已收纳的",否则桌面会一下子全放出来)。</summary>
     public void RefreshDesktopIconsState()
     {
-        if (_iconLayout is null)
+        var layout = PerItemHidingAvailable ? _iconLayout : null;
+        if (layout is null)
         {
             DesktopIconsVisible = _desktopIcons.AreIconsVisible;
             return;
@@ -751,7 +760,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 // 启动自愈:先把上次挪走的图标全部还原,再按当前收纳情况重新隐藏 ——
                 // 这样即使上次运行中途崩了,也不会留下"挪到一半"的布局。
-                _iconLayout.RestoreAll();
+                layout.RestoreAll();
                 SetDesktopIconsVisible(false);
                 if (!preferred) PersistIconHiding(true);        // 迁移:把偏好写进配置
             }
@@ -769,8 +778,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>某个条目被放回桌面(从盒子里拖出来)→ 立刻把它的图标挪回原位,让它可见。</summary>
     public void RestoreItemIcon(string? path)
     {
-        if (_iconLayout is null || string.IsNullOrWhiteSpace(path)) return;
-        try { _iconLayout.Restore(path); }
+        if (!PerItemHidingAvailable || string.IsNullOrWhiteSpace(path)) return;
+        var layout = _iconLayout;
+        if (layout is null) return;
+        try { layout.Restore(path); }
         catch (Exception ex) { App.LogError(ex, "MainViewModel.RestoreItemIcon"); }
     }
 
@@ -784,8 +795,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void TryParkCollected(string? path)
     {
-        if (_iconLayout is null || string.IsNullOrWhiteSpace(path)) return;
-        try { _iconLayout.Park(new[] { path }); }
+        if (!PerItemHidingAvailable || string.IsNullOrWhiteSpace(path)) return;
+        var layout = _iconLayout;
+        if (layout is null) return;
+        try { layout.Park(new[] { path }); }
         catch (Exception ex) { App.LogError(ex, "MainViewModel.TryParkCollected"); }
     }
 

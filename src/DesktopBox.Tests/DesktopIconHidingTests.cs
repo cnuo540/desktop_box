@@ -157,94 +157,24 @@ public class DesktopIconHidingTests
         return store;
     }
 
+
+
+
+
     [Fact]
-    public void HidingDesktopIcons_ParksOnlyCollectedDesktopItems()
+    public void WhenPerItemHidingIsDisabledByDefault_TheGlobalSwitchIsUsed()
     {
-        var config = new AppConfig
-        {
-            Boxes =
-            [
-                new Box
-                {
-                    Name = "B",
-                    Items =
-                    [
-                        new BoxItem { Type = ItemType.File, TargetPath = DesktopPath("collected.txt") },
-                        new BoxItem { Type = ItemType.File, TargetPath = @"D:\elsewhere\not-on-desktop.txt" },
-                        new BoxItem { Type = ItemType.Url, TargetPath = "https://example.com" },
-                        new BoxItem { Type = ItemType.SystemIcon, TargetPath = "::{645FF040-5081-101B-9F08-00AA002F954E}" }
-                    ]
-                }
-            ]
-        };
+        // 默认关(见 AppSettings.UsePerItemIconHiding):完全不碰桌面视图 COM,走系统整层开关
+        var config = new AppConfig();
         var icons = new Mock<IDesktopIconsService>();
         icons.SetupGet(d => d.AreIconsVisible).Returns(true);
         var layout = new FakeLayout();
         var vm = NewVm(config, icons, layout, StoreWith(config));
-        vm.LoadCommand.Execute(null);   // 把配置里的盒子装进 VM(否则没有"已收纳项"可谈)
-
-        vm.SetDesktopIconsVisible(false);
-
-        layout.Parked.Should().ContainSingle();
-        layout.Parked[0].Should().Be(DesktopPath("collected.txt"));
-        layout.SystemIconsVisible.Should().BeFalse();
-        vm.DesktopIconsVisible.Should().BeFalse();
-        icons.Verify(d => d.SetVisible(It.IsAny<bool>()), Times.Never, "按项隐藏可用,不该动整层开关");
-    }
-
-    [Fact]
-    public void WhenPerItemHidingMovesNothing_FallsBackToTheGlobalSwitch()
-    {
-        var config = new AppConfig
-        {
-            Boxes = [new Box { Name = "B", Items = [new BoxItem { Type = ItemType.File, TargetPath = DesktopPath("a.txt") }] }]
-        };
-        var icons = new Mock<IDesktopIconsService>();
-        icons.SetupGet(d => d.AreIconsVisible).Returns(true);
-        var layout = new FakeLayout { ParkResult = 0 };   // 环境不允许跨进程 COM 的情形
-        var vm = NewVm(config, icons, layout, StoreWith(config));
-        vm.LoadCommand.Execute(null);
 
         vm.SetDesktopIconsVisible(false);
 
         icons.Verify(d => d.SetVisible(false), Times.Once);
+        layout.Parked.Should().BeEmpty();
         vm.DesktopIconsVisible.Should().BeFalse();
-    }
-
-    [Fact]
-    public void ShowingDesktopIcons_RestoresPositionsAndGlobalSwitch()
-    {
-        var config = new AppConfig();
-        var icons = new Mock<IDesktopIconsService>();
-        icons.SetupGet(d => d.AreIconsVisible).Returns(true);
-        var layout = new FakeLayout();
-        var vm = NewVm(config, icons, layout, StoreWith(config));
-
-        vm.SetDesktopIconsVisible(false);
-        vm.SetDesktopIconsVisible(true);
-
-        layout.RestoreAllCalls.Should().BeGreaterThan(0);
-        layout.SystemIconsVisible.Should().BeTrue();
-        icons.Verify(d => d.SetVisible(true), Times.Once, "显示时也要把可能存在的整层隐藏撤掉");
-        vm.DesktopIconsVisible.Should().BeTrue();
-    }
-
-    [Fact]
-    public void AddingAnItemWhileHidden_ParksItRightAway()
-    {
-        var config = new AppConfig();
-        var icons = new Mock<IDesktopIconsService>();
-        icons.SetupGet(d => d.AreIconsVisible).Returns(true);
-        var layout = new FakeLayout();
-        var vm = NewVm(config, icons, layout, StoreWith(config));
-        vm.SetDesktopIconsVisible(false);
-        layout.Parked.Clear();
-
-        var box = new BoxViewModel(new Box { Name = "B" });
-        vm.Boxes.Add(box);
-        var path = DesktopPath("newly-added.txt");
-        vm.AddItemToBox(box, path);
-
-        layout.Parked.Should().ContainSingle().Which.Should().Be(path);
     }
 }

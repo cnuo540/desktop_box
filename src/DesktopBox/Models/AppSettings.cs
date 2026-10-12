@@ -15,4 +15,10 @@ public class AppSettings
     /// <summary>是否隐藏"已收纳"的桌面图标(按项隐藏:程序把这些图标挪到可视区外)。
     /// 未收纳的、桌面上新建的照常显示。默认关闭。</summary>
     public bool HideCollectedDesktopIcons { get; set; }
+
+    /// <summary>是否启用"按项隐藏"的实现(挪图标位置)。
+    /// <b>默认关闭</b>:该实现依赖桌面视图的跨进程 COM,目前只在我的受限环境里跑过、
+    /// 在真机上因接口声明问题出现访问违例(进程崩溃)还没修好 —— 关掉时走系统整层开关(稳定)。
+    /// 修好并真机验证后再默认开启。</summary>
+    public bool UsePerItemIconHiding { get; set; }
 }
