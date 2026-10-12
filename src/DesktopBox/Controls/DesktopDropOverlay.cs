@@ -183,13 +183,14 @@ public sealed class DesktopDropOverlay : IDisposable
 
     private void OnDragOverDesktop(object sender, DragEventArgs e)
     {
-        e.Effects = IsSupportedDrag(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Effects = EffectsFor(e.Data);
         e.Handled = true;
     }
 
     private void OnDropOnDesktop(object sender, DragEventArgs e)
     {
-        if (IsSupportedDrag(e.Data))
+        var effects = EffectsFor(e.Data);
+        if (effects != DragDropEffects.None)
         {
             DroppedOnDesktop = true;
             // 落点用光标屏幕坐标(物理像素,与盒子模型坐标同一坐标系):拖标签出盒时用它决定新盒子位置。
@@ -203,7 +204,7 @@ public sealed class DesktopDropOverlay : IDisposable
                 DropScreenPosition = null;
             }
 
-            e.Effects = DragDropEffects.Copy;
+            e.Effects = effects;
         }
         else
         {
@@ -214,10 +215,19 @@ public sealed class DesktopDropOverlay : IDisposable
     }
 
     /// <summary>本覆盖层接收的拖放数据:盒子里的条目(拖出到桌面=从盒子移除)与标签(拖出=独立成新盒子)。</summary>
-    internal static bool IsSupportedDrag(IDataObject? data) =>
-        data is not null
-        && (data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)
-            || data.GetDataPresent(ItemDragDrop.DragSourceTabFormat));
+    internal static bool IsSupportedDrag(IDataObject? data) => EffectsFor(data) != DragDropEffects.None;
+
+    /// <summary>按拖拽内容给出落下效果。<b>必须与拖拽源允许的效果有交集</b>,否则系统直接显示"禁止"
+    /// 光标并拒绝落下——拖标签出盒曾经就栽在这里:源只允许 Move,而这里回了 Copy,
+    /// 结果鼠标一路显示禁止图标、松手什么也不发生。
+    /// 条目拖出(ItemTile)的源只允许 Copy,标签拖出(BoxControl)的源只允许 Move。</summary>
+    internal static DragDropEffects EffectsFor(IDataObject? data)
+    {
+        if (data is null) return DragDropEffects.None;
+        if (data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)) return DragDropEffects.Copy;
+        if (data.GetDataPresent(ItemDragDrop.DragSourceTabFormat)) return DragDropEffects.Move;
+        return DragDropEffects.None;
+    }
 
     public void Dispose()
     {

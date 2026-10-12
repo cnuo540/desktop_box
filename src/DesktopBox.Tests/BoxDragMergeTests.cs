@@ -248,6 +248,38 @@ public class BoxDragMergeTests
         });
     }
 
+    [Fact]
+    public void DropOverlay_OffersEffectsCompatibleWithEachDragSource()
+    {
+        RunOnSta(() =>
+        {
+            // 条目拖出:ItemTile 的源只允许 Copy → 落点必须给 Copy
+            var item = new DataObject();
+            item.SetData(ItemDragDrop.DragSourceItemFormat, Guid.NewGuid());
+            DesktopDropOverlay.EffectsFor(item).Should().Be(DragDropEffects.Copy);
+
+            // 标签拖出:BoxControl 的源只允许 Move → 落点必须给 Move。
+            // 这里曾经回 Copy,两边没交集 → 鼠标显示"禁止"图标、松手毫无反应。
+            var tab = new DataObject();
+            tab.SetData(ItemDragDrop.DragSourceTabFormat, Guid.NewGuid());
+            DesktopDropOverlay.EffectsFor(tab).Should().Be(DragDropEffects.Move);
+
+            DesktopDropOverlay.EffectsFor(null).Should().Be(DragDropEffects.None);
+        });
+    }
+
+    [Fact]
+    public void TabDragSourceAndDesktopDropOverlay_AgreeOnMoveEffect()
+    {
+        var code = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml.cs");
+        // 源:标签拖拽只允许 Move
+        code.Should().Contain("DragDrop.DoDragDrop(TabList, payload, DragDropEffects.Move)");
+
+        var overlay = ReadRepositoryFile("src", "DesktopBox", "Controls", "DesktopDropOverlay.cs");
+        // 落点:标签格式回 Move(与源有交集,否则系统判定不可放下)
+        overlay.Should().Contain("DragSourceTabFormat)) return DragDropEffects.Move;");
+    }
+
     // ---- 合并目标高亮(视觉提示) ----
 
     [Fact]
