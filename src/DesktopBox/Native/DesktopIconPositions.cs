@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using DesktopBox.Services;
 
@@ -32,12 +34,20 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
 
     private static readonly Guid SID_STopLevelBrowser = new("4C96BE40-915C-11CF-99D3-00AA004AE837");
     private static readonly Guid IID_IShellBrowser = new("000214E2-0000-0000-C000-000000000046");
+    private static readonly Guid IID_IShellFolder = new("000214E6-0000-0000-C000-000000000046");
+
+    /// <summary>子 PIDL → 它所属的整块 PIDL(释放时必须释放整块,否则会破坏堆)。</summary>
+    private readonly ConcurrentDictionary<IntPtr, IntPtr> _pidlOwner = new();
 
     /// <summary>桌面视图缓存。调用失败时置空,下次重取(explorer 重启后视图会失效)。</summary>
     private IFolderView? _view;
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern int SHParseDisplayName(string pszName, IntPtr pbc, out IntPtr ppidl, uint sfgaoIn, out uint psfgaoOut);
+
+    /// <summary>取 PIDL 的最后一个 SHITEMID —— 即"子 PIDL",IFolderView 要的就是这个形态。</summary>
+    [DllImport("shell32.dll")]
+    private static extern IntPtr ILFindLastID(IntPtr pidl);
 
     [DllImport("ole32.dll")]
     private static extern void CoTaskMemFree(IntPtr pv);
@@ -50,27 +60,40 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
         void QueryService(ref Guid guidService, ref Guid riid, out IntPtr ppvObject);
     }
 
-    /// <summary>IShellWindows(dual):IDispatch 的 7 个槽位用占位方法占住,保证后续方法在 vtable 中的位置正确。
-    /// 只用到 FindWindowSW(第 9 个接口方法)。不用 dynamic 调 COM 是故意的:DLR 那条路在本项目里实测
-    /// 会拿到 E_ACCESSDENIED(拒绝访问),声明接口直接走 vtable 才稳。</summary>
+    /// <summary>IShellWindows(dual):IDispatch 只占 4 个槽位(IUnknown 的 3 个由 CLR 处理,不能声明),
+    /// 且 IShellWindows 的方法顺序必须与 exdisp.idl 完全一致 ——
+    /// get_Count, get__NewEnum, Item, <b>FindWindowSW(第 4 个)</b>, OnCreated, ProcessAttachDetach,
+    /// Register, RegisterPending, Revoke, OnNavigate, OnActivated。
+    ///
+    /// 这两个错误(占位多写了 3 个 + FindWindowSW 排到第 9 位)正是 v1.7.29 真机崩溃的原因:
+    /// 调用落到了错误的函数上 → 访问违例(不是异常,抓不住,进程直接消失)。
+    /// 现在 FindWindowSW 一律走 IDispatch 调用(见 TryGetView),不再依赖这段 vtable。</summary>
     [ComImport, Guid("85CB6900-4D95-11CF-960C-0080C7F4EE85"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IShellWindows
     {
         void Dispatch01(); void Dispatch02(); void Dispatch03(); void Dispatch04();
-        void Dispatch05(); void Dispatch06(); void Dispatch07();
 
         void GetCount(out int count);
-        void Item(IntPtr index, out IntPtr dispatch);
         void NewEnum(out IntPtr enumUnknown);
+        void Item(IntPtr index, out IntPtr dispatch);
+        IntPtr FindWindowSW(IntPtr pvarLoc, IntPtr pvarRoot, int swClass, out int hwnd, int swfwOptions);
+        void OnCreated(int cookie);
+        void ProcessAttachDetach(bool attach);
         void Register(IntPtr dispatch, int hwnd, int swClass, out int cookie);
         void RegisterPending(int threadId, IntPtr loc, IntPtr root, int swClass, out int hwnd, int options, out int cookie);
         void Revoke(int cookie);
         void OnNavigate(int cookie, IntPtr loc);
         void OnActivated(int cookie, bool active);
-        /// <summary>第 9 个接口方法:按类别找窗口(SWC_DESKTOP=桌面),返回它的 IDispatch。</summary>
-        IntPtr FindWindowSW(IntPtr pvarLoc, IntPtr pvarRoot, int swClass, out int hwnd, int swfwOptions);
-        void OnCreated(int cookie);
-        void ProcessAttachDetach(bool attach);
+    }
+
+    /// <summary>IShellFolder:只需要 ParseDisplayName(把路径解析成 PIDL)。</summary>
+    [ComImport, Guid("000214E6-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellFolder
+    {
+        void ParseDisplayName(IntPtr hwnd, IntPtr pbc, [MarshalAs(UnmanagedType.LPWStr)] string pszDisplayName,
+                              out uint pchEaten, out IntPtr ppidl, ref uint pdwAttributes);
+        void Slot02(); void Slot03(); void Slot04(); void Slot05(); void Slot06();
+        void Slot07(); void Slot08(); void Slot09(); void Slot10(); void Slot11();
     }
 
     [ComImport, Guid("000214E2-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -115,37 +138,37 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
         IntPtr viewPtr = IntPtr.Zero;
         try
         {
-            // ShellWindows 的桌面窗口:走声明接口(不用 dynamic,见 IShellWindows 注释)
             var shellWindowsType = Type.GetTypeFromCLSID(CLSID_ShellWindows);
             if (shellWindowsType is null) return null;
 
-            var shellWindows = (IShellWindows?)Activator.CreateInstance(shellWindowsType);
+            var shellWindows = Activator.CreateInstance(shellWindowsType);
             if (shellWindows is null) return null;
 
-            var dispatchPtr = shellWindows.FindWindowSW(IntPtr.Zero, IntPtr.Zero, SWC_DESKTOP, out _, SWFO_NEEDDISPATCH);
-            if (dispatchPtr == IntPtr.Zero) return null;
+            // FindWindowSW 走 IDispatch 调用:它有两个 VARIANT* 参数和一个 [out,retval] IDispatch**,
+            // 手写 vtable 极易错(错一次就是进程崩溃),而 IDispatch 由系统负责参数转换。
+            window = shellWindows.GetType().InvokeMember(
+                "FindWindowSW", BindingFlags.InvokeMethod, null, shellWindows,
+                new object?[] { null, null, SWC_DESKTOP, 0, SWFO_NEEDDISPATCH });
+            if (window is null) return null;
 
-            try
+            if (window is not IServiceProviderCom provider)
             {
-                window = Marshal.GetObjectForIUnknown(dispatchPtr);
-                var provider = (IServiceProviderCom)window;
-                var sid = SID_STopLevelBrowser;
-                var iid = IID_IShellBrowser;
-                provider.QueryService(ref sid, ref iid, out browserPtr);
-                if (browserPtr == IntPtr.Zero) return null;
-
-                var browser = (IShellBrowser)Marshal.GetObjectForIUnknown(browserPtr);
-                browser.QueryActiveShellView(out viewPtr);
-                if (viewPtr == IntPtr.Zero) return null;
-
-                var viewObject = Marshal.GetObjectForIUnknown(viewPtr);
-                _view = viewObject as IFolderView;
-                return _view;
+                LogService.Warn("DesktopIconPositions.View", "桌面窗口不支持 IServiceProvider");
+                return null;
             }
-            finally
-            {
-                if (dispatchPtr != IntPtr.Zero) { try { Marshal.Release(dispatchPtr); } catch { } }
-            }
+
+            var sid = SID_STopLevelBrowser;
+            var iid = IID_IShellBrowser;
+            provider.QueryService(ref sid, ref iid, out browserPtr);
+            if (browserPtr == IntPtr.Zero) return null;
+
+            var browser = (IShellBrowser)Marshal.GetObjectForIUnknown(browserPtr);
+            browser.QueryActiveShellView(out viewPtr);
+            if (viewPtr == IntPtr.Zero) return null;
+
+            var viewObject = Marshal.GetObjectForIUnknown(viewPtr);
+            _view = viewObject as IFolderView;
+            return _view;
         }
         catch (Exception ex)
         {
@@ -164,21 +187,52 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
     public bool TryParse(string path, out IntPtr item)
     {
         item = IntPtr.Zero;
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        var view = TryGetView();
+        if (view is null) return false;
+
+        IntPtr folderPtr = IntPtr.Zero;
+        IntPtr fullPidl = IntPtr.Zero;
         try
         {
-            if (string.IsNullOrWhiteSpace(path)) return false;
-            var hr = SHParseDisplayName(path, IntPtr.Zero, out var pidl, SFGAO_IN, out _);
-            if (hr != 0 || pidl == IntPtr.Zero) return false;
-            item = pidl;
+            // 用"视图自己的文件夹"解析路径,再取最后一个 SHITEMID 作为子 PIDL。
+            // 直接用 SHParseDisplayName 的结果会得到 E_FAIL:那是整块绝对 PIDL,不是子 PIDL。
+            var iid = IID_IShellFolder;
+            view.GetFolder(ref iid, out folderPtr);
+            if (folderPtr == IntPtr.Zero) return false;
+
+            var folder = (IShellFolder)Marshal.GetObjectForIUnknown(folderPtr);
+            var attributes = 0u;
+            folder.ParseDisplayName(IntPtr.Zero, IntPtr.Zero, path, out _, out fullPidl, ref attributes);
+            if (fullPidl == IntPtr.Zero) return false;
+
+            var child = ILFindLastID(fullPidl);
+            if (child == IntPtr.Zero) return false;
+
+            _pidlOwner[child] = fullPidl;
+            item = child;
             return true;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            LogService.Warn("DesktopIconPositions.Parse", LogService.Truncate(ex.Message, 160));
+            _view = null;
+            if (fullPidl != IntPtr.Zero) { try { CoTaskMemFree(fullPidl); } catch { } }
+            return false;
+        }
+        finally
+        {
+            if (folderPtr != IntPtr.Zero) { try { Marshal.Release(folderPtr); } catch { } }
+        }
     }
 
     public void Free(IntPtr item)
     {
         if (item == IntPtr.Zero) return;
-        try { CoTaskMemFree(item); } catch { }
+        // 释放整块 PIDL(子 PIDL 只是它中间的一个指针)
+        var original = _pidlOwner.TryRemove(item, out var owner) ? owner : item;
+        try { CoTaskMemFree(original); } catch { }
     }
 
     public bool TryGet(IntPtr item, out int x, out int y)
