@@ -47,7 +47,7 @@
 | 🗂️ | **Tabbed boxes** — Convert/merge/split boxes into tabbed containers; tab names are centered and **hovering a tab name switches to it** instantly; reorder tabs by drag. |
 | 🔒 | **Lock position** — One click on the padlock (or the context menu) freezes a box so it can't be dragged or resized by accident. Rolling up / hover-expand still work. |
 | 🕐 | **Header clock + hover-only controls** — The title bar idles as *clock · name*; hovering the box swaps the clock for the lock / icon-size / roll-up / eye buttons. |
-| 🔳 | **One-click icon size** — A title-bar button cycles Large → Medium → Small icons globally (the glyph shows the current step: 1 / 4 / 9 squares). |
+| 🔳 | **One-click icon size / view** — A title-bar button cycles Large → Medium → **List** globally (the glyph shows the current step: 1 square / 4 squares / 3 bars). |
 | 🖱️ | **Drag to reorganize** — Drag a tab to the desktop to make it a standalone box, or onto another box to join it; drag a whole box onto another box (it highlights in blue) to merge it into a tabbed box. |
 | 🔻 | **Roll up & auto-expand on hover** — Roll a box up to just its title bar (chevron, double-click the title, or context menu); hovering expands it and it rolls back when the pointer leaves. Toggle in Settings. |
 | 👁️ | **Hide/Show desktop icons** — One toggle clears your real desktop icons (purely visual, no files touched). |
@@ -66,7 +66,7 @@
 | 🗂️ | **标签盒子** — 盒子可转标签盒子、合并/拆分；标签名**居中**显示、**鼠标移上去即切换**，标签可拖动排序。 |
 | 🔒 | **锁定位置** — 点标题栏的锁（或右键「锁定位置」）后盒子不能再拖动/缩放，避免误移动；卷起/悬停展开照常可用。 |
 | 🕐 | **标题栏时钟 + 悬停才出按钮** — 平时标题栏是「时间 · 名称」；鼠标移到盒子上，时间隐藏、换成 锁 / 图标大小 / 卷起 / 眼睛 按钮。 |
-| 🔳 | **一键图标大小** — 标题栏按钮循环切换 大图标 → 中图标 → 小图标（全局生效），图示就是当前档位：1 / 4 / 9 个方块。 |
+| 🔳 | **一键图标大小 / 视图** — 标题栏按钮循环切换 大图标 → 中图标 → **列表**（全局生效），图示就是当前档位：1 个方块 / 4 个方块 / 3 条横杠。 |
 | 🖱️ | **拖动重排** — 标签拖到桌面 = 独立成新盒子，拖到别的盒子上 = 并入对方；整个盒子拖到另一个盒子上（对方蓝色高亮）= 合并成标签盒子。 |
 | 🔻 | **卷起 + 悬停自动展开** — 盒子可卷起成只剩标题栏(标题栏箭头/双击标题/右键菜单);鼠标悬停自动展开、移开自动收起,可在设置里关闭。 |
 | 👁️ | **隐藏/显示桌面图标** — 一键清空桌面真实图标(纯视觉,不动文件)。 |

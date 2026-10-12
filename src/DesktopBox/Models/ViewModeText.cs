@@ -15,16 +15,17 @@ public static class ViewModeText
         _ => "view.large"
     };
 
-    /// <summary>图标大小按钮的下一个模式:大 → 中 → 小 → 大循环。
-    /// 列表/详细信息/平铺属于"布局"而非图标大小(它们只能从右键菜单选),点按钮一律回到大图标。</summary>
+    /// <summary>图标大小/视图按钮的下一个模式:大图标 → 中图标 → 列表 → 大图标 循环。
+    /// 第三档是"列表"(最省空间的一档);小图标 / 详细信息 / 平铺仍只能从右键菜单「查看」里选,
+    /// 从这些档位点按钮一律回到大图标。</summary>
     public static ViewMode NextIconSize(ViewMode current) => current switch
     {
         ViewMode.Large => ViewMode.Medium,
-        ViewMode.Medium => ViewMode.Small,
+        ViewMode.Medium => ViewMode.List,
         _ => ViewMode.Large
     };
 
-    /// <summary>是否属于"图标大小"三档(大/中/小),用于判断当前是否处于循环内。</summary>
-    public static bool IsIconSize(ViewMode mode) =>
-        mode is ViewMode.Large or ViewMode.Medium or ViewMode.Small;
+    /// <summary>是否属于按钮循环的三档(大图标 / 中图标 / 列表)。</summary>
+    public static bool IsQuickView(ViewMode mode) =>
+        mode is ViewMode.Large or ViewMode.Medium or ViewMode.List;
 }

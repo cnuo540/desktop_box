@@ -50,7 +50,7 @@
     <s:String x:Key="tip.expandBox">Expand box</s:String>
     <s:String x:Key="tip.lockBox">Lock position (no drag/resize)</s:String>
     <s:String x:Key="tip.unlockBox">Unlock position (drag/resize again)</s:String>
-    <s:String x:Key="tip.iconSize">Icon size: {0} (click for {1})</s:String>
+    <s:String x:Key="tip.iconSize">{0} (click for {1})</s:String>
 
     <s:String x:Key="settings.title">DesktopBox Settings</s:String>
     <s:String x:Key="settings.general">General</s:String>

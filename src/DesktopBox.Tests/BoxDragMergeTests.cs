@@ -20,12 +20,12 @@ public class BoxDragMergeTests
 
     [Theory]
     [InlineData(ViewMode.Large, ViewMode.Medium)]
-    [InlineData(ViewMode.Medium, ViewMode.Small)]
-    [InlineData(ViewMode.Small, ViewMode.Large)]
+    [InlineData(ViewMode.Medium, ViewMode.List)]
     [InlineData(ViewMode.List, ViewMode.Large)]
+    [InlineData(ViewMode.Small, ViewMode.Large)]
     [InlineData(ViewMode.Detail, ViewMode.Large)]
     [InlineData(ViewMode.Tile, ViewMode.Large)]
-    public void NextIconSize_CyclesLargeMediumSmallAndFallsBackToLarge(ViewMode current, ViewMode expected)
+    public void NextIconSize_CyclesLargeMediumListAndFallsBackToLarge(ViewMode current, ViewMode expected)
         => ViewModeText.NextIconSize(current).Should().Be(expected);
 
     [Fact]
@@ -37,8 +37,12 @@ public class BoxDragMergeTests
         ViewModeText.ResourceKey(ViewMode.List).Should().Be("view.list");
         ViewModeText.ResourceKey(ViewMode.Detail).Should().Be("view.detail");
         ViewModeText.ResourceKey(ViewMode.Tile).Should().Be("view.tile");
-        ViewModeText.IsIconSize(ViewMode.Medium).Should().BeTrue();
-        ViewModeText.IsIconSize(ViewMode.Tile).Should().BeFalse();
+        // 按钮循环的三档 = 大图标 / 中图标 / 列表(第三档是列表,不再是小图标)
+        ViewModeText.IsQuickView(ViewMode.Large).Should().BeTrue();
+        ViewModeText.IsQuickView(ViewMode.Medium).Should().BeTrue();
+        ViewModeText.IsQuickView(ViewMode.List).Should().BeTrue();
+        ViewModeText.IsQuickView(ViewMode.Small).Should().BeFalse();
+        ViewModeText.IsQuickView(ViewMode.Tile).Should().BeFalse();
     }
 
     [Fact]
@@ -55,8 +59,8 @@ public class BoxDragMergeTests
         box.ViewMode.Should().Be(ViewMode.Medium);   // 所有盒子立即跟随
 
         vm.CycleIconSize();
-        vm.GlobalViewMode.Should().Be(ViewMode.Small);
-        box.ViewMode.Should().Be(ViewMode.Small);
+        vm.GlobalViewMode.Should().Be(ViewMode.List);   // 第三档 = 列表
+        box.ViewMode.Should().Be(ViewMode.List);
 
         vm.CycleIconSize();
         vm.GlobalViewMode.Should().Be(ViewMode.Large);
@@ -316,7 +320,7 @@ public class BoxDragMergeTests
         xaml.IndexOf("x:Name=\"IconSizeBtn\"", StringComparison.Ordinal)
             .Should().BeLessThan(xaml.IndexOf("x:Name=\"CollapseBtn\"", StringComparison.Ordinal));
         xaml.Should().Contain("{x:Static m:ViewMode.Medium}");   // 图标随当前档位变化
-        xaml.Should().Contain("{x:Static m:ViewMode.Small}");
+        xaml.Should().Contain("{x:Static m:ViewMode.List}");     // 第三档是列表
 
         var code = ReadRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml.cs");
         code.Should().Contain("private void OnCycleIconSize");
