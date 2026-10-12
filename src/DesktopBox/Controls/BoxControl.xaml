@@ -1,4 +1,4 @@
-<UserControl x:Class="DesktopBox.Controls.BoxControl"
+﻿<UserControl x:Class="DesktopBox.Controls.BoxControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ctl="clr-namespace:DesktopBox.Controls"
@@ -22,7 +22,7 @@
             CornerRadius="10"
             Background="#99000000"
             ClipToBounds="True">
-        <!-- 边框走 Style:拖动中的盒子悬停在本盒子上(IsMergeTarget)时要高亮成"合并目标" -->
+        <!-- 杈规璧?Style:鎷栧姩涓殑鐩掑瓙鎮仠鍦ㄦ湰鐩掑瓙涓?IsMergeTarget)鏃惰楂樹寒鎴?鍚堝苟鐩爣" -->
         <Border.Style>
             <Style TargetType="Border">
                 <Setter Property="BorderBrush" Value="#66FFFFFF"/>
@@ -42,7 +42,7 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- 标题栏:鼠标按下可拖动整个盒子;双击=卷起/展开 -->
+            <!-- 鏍囬鏍?榧犳爣鎸変笅鍙嫋鍔ㄦ暣涓洅瀛?鍙屽嚮=鍗疯捣/灞曞紑 -->
             <Border Grid.Row="0"
                     x:Name="HeaderBar"
                     Background="#66000000"
@@ -52,13 +52,13 @@
                     MouseLeftButtonUp="OnHeaderUp">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>   <!-- 0 时间(平时显示,鼠标进盒子时隐藏) -->
-                        <ColumnDefinition Width="*"/>      <!-- 1 名称(居中) -->
-                        <ColumnDefinition Width="Auto"/>   <!-- 2 色标 + 操作按钮 -->
+                        <ColumnDefinition Width="Auto"/>   <!-- 0 鏃堕棿(骞虫椂鏄剧ず,榧犳爣杩涚洅瀛愭椂闅愯棌) -->
+                        <ColumnDefinition Width="*"/>      <!-- 1 鍚嶇О(灞呬腑) -->
+                        <ColumnDefinition Width="Auto"/>   <!-- 2 鑹叉爣 + 鎿嶄綔鎸夐挳 -->
                     </Grid.ColumnDefinitions>
 
-                    <!-- 标题栏时钟:平时显示当前时间(HH:mm,每分钟刷新),鼠标移到盒子上(展开区域)时隐藏,
-                         把标题栏让给名称与右侧操作按钮。用 Hidden 而不是 Collapsed:保留占位,悬停时布局不跳动。 -->
+                    <!-- 鏍囬鏍忔椂閽?骞虫椂鏄剧ず褰撳墠鏃堕棿(HH:mm,姣忓垎閽熷埛鏂?,榧犳爣绉诲埌鐩掑瓙涓?灞曞紑鍖哄煙)鏃堕殣钘?
+                         鎶婃爣棰樻爮璁╃粰鍚嶇О涓庡彸渚ф搷浣滄寜閽€傜敤 Hidden 鑰屼笉鏄?Collapsed:淇濈暀鍗犱綅,鎮仠鏃跺竷灞€涓嶈烦鍔ㄣ€?-->
                     <TextBlock Grid.Column="0"
                                x:Name="HeaderClock"
                                Text="{Binding Source={x:Static ctl:HeaderClock.Instance}, Path=CurrentTime}"
@@ -87,9 +87,7 @@
                                TextAlignment="Center"
                                TextTrimming="CharacterEllipsis"/>
 
-                    <!-- 右侧:三个操作按钮(锁 / 卷起 / 眼睛)。
-                         按钮平时隐藏,鼠标移到盒子上(展开区域)才显示——平时标题栏只留时间与名称。
-                         隐藏用 Hidden 保留占位,名称的位置不会因悬停而跳动。 -->
+                    <!-- 鍙充晶:涓変釜鎿嶄綔鎸夐挳(閿?/ 鍗疯捣 / 鐪肩潧)銆?                         鎸夐挳骞虫椂闅愯棌,榧犳爣绉诲埌鐩掑瓙涓?灞曞紑鍖哄煙)鎵嶆樉绀衡€斺€斿钩鏃舵爣棰樻爮鍙暀鏃堕棿涓庡悕绉般€?                         闅愯棌鐢?Hidden 淇濈暀鍗犱綅,鍚嶇О鐨勪綅缃笉浼氬洜鎮仠鑰岃烦鍔ㄣ€?-->
                     <StackPanel Grid.Column="2"
                                 x:Name="HeaderActions"
                                 Orientation="Horizontal"
@@ -105,8 +103,7 @@
                                 </Style.Triggers>
                             </Style>
                         </StackPanel.Style>
-                        <!-- 锁定位置:锁定后不能拖动/缩放(蓝色闭合锁=已锁定,灰色开口锁=未锁定)。
-                             锁定的盒子仍可卷起/悬停展开——它们不改变盒子位置。 -->
+                        <!-- 閿佸畾浣嶇疆:閿佸畾鍚庝笉鑳芥嫋鍔?缂╂斁(钃濊壊闂悎閿?宸查攣瀹?鐏拌壊寮€鍙ｉ攣=鏈攣瀹?銆?                             閿佸畾鐨勭洅瀛愪粛鍙嵎璧?鎮仠灞曞紑鈥斺€斿畠浠笉鏀瑰彉鐩掑瓙浣嶇疆銆?-->
                         <Button x:Name="LockBtn"
                                 Click="OnToggleLock"
                                 ToolTip="{Binding LockActionText}"
@@ -132,8 +129,7 @@
                                 </Path.Style>
                             </Path>
                         </Button>
-                        <!-- 图标大小:大图标 → 中图标 → 小图标 循环(全局生效,所有盒子一致)。
-                             图标本身反映当前档位:1 个大方块 / 4 个中方块 / 9 个小方块。 -->
+                        <!-- 鍥炬爣澶у皬:澶у浘鏍?鈫?涓浘鏍?鈫?灏忓浘鏍?寰幆(鍏ㄥ眬鐢熸晥,鎵€鏈夌洅瀛愪竴鑷?銆?                             鍥炬爣鏈韩鍙嶆槧褰撳墠妗ｄ綅:1 涓ぇ鏂瑰潡 / 4 涓腑鏂瑰潡 / 9 涓皬鏂瑰潡銆?-->
                         <Button x:Name="IconSizeBtn"
                                 Click="OnCycleIconSize"
                                 ToolTip="{Binding IconSizeActionText}"
@@ -159,8 +155,7 @@
                                 </Path.Style>
                             </Path>
                         </Button>
-                        <!-- 卷起/展开按钮:展开时显示向上箭头(点了就卷起),卷起时显示向下箭头。
-                             卷起后鼠标悬停会自动展开(可在设置里关掉)。 -->
+                        <!-- 鍗疯捣/灞曞紑鎸夐挳:灞曞紑鏃舵樉绀哄悜涓婄澶?鐐逛簡灏卞嵎璧?,鍗疯捣鏃舵樉绀哄悜涓嬬澶淬€?                             鍗疯捣鍚庨紶鏍囨偓鍋滀細鑷姩灞曞紑(鍙湪璁剧疆閲屽叧鎺?銆?-->
                         <Button x:Name="CollapseBtn"
                                 Click="OnToggleCollapse"
                                 ToolTip="{Binding CollapseActionText}"
@@ -183,7 +178,7 @@
                                 </Path.Style>
                             </Path>
                         </Button>
-                        <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
+                        <!-- 鏄剧ず/闅愯棌妗岄潰鍥炬爣蹇嵎鎸夐挳:鐪肩潧鍥炬爣,鏄剧ず=浜壊瀹炲績,闅愯棌=鏆楄壊绌哄績 -->
                         <Button x:Name="ToggleIconsBtn"
                                 Click="OnToggleDesktopIcons"
                                 ToolTip="{DynamicResource tip.toggleIcons}"
@@ -203,18 +198,18 @@
                 </Grid>
             </Border>
 
-            <!-- 标签行(仅标签模式且非卷起时可见) -->
+            <!-- 鏍囩琛?浠呮爣绛炬ā寮忎笖闈炲嵎璧锋椂鍙) -->
             <Grid Grid.Row="1"
                   x:Name="TabRow"
                   Visibility="{Binding ShowTabs, Converter={StaticResource BoolVis}}"
                   Background="#33000000">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>     <!-- 左弹性:把标签组顶到中间 -->
-                    <ColumnDefinition Width="Auto"/>  <!-- 标签组(合并盒子的多个名字) -->
-                    <ColumnDefinition Width="*"/>     <!-- 右弹性 -->
+                    <ColumnDefinition Width="*"/>     <!-- 宸﹀脊鎬?鎶婃爣绛剧粍椤跺埌涓棿 -->
+                    <ColumnDefinition Width="Auto"/>  <!-- 鏍囩缁?鍚堝苟鐩掑瓙鐨勫涓悕瀛? -->
+                    <ColumnDefinition Width="*"/>     <!-- 鍙冲脊鎬?-->
                 </Grid.ColumnDefinitions>
-                <!-- 标签组居中:两侧各一个弹性列。MaxWidth 兜底——标签多到超过盒子宽度时
-                     仍由 ListBox 内部横向滚动(滚轮可换标签),不会顶穿盒子。 -->
+                <!-- 鏍囩缁勫眳涓?涓や晶鍚勪竴涓脊鎬у垪銆侻axWidth 鍏滃簳鈥斺€旀爣绛惧鍒拌秴杩囩洅瀛愬搴︽椂
+                     浠嶇敱 ListBox 鍐呴儴妯悜婊氬姩(婊氳疆鍙崲鏍囩),涓嶄細椤剁┛鐩掑瓙銆?-->
                 <ListBox x:Name="TabList" Grid.Column="1"
                          MaxWidth="{Binding ActualWidth, ElementName=TabRow}"
                          Margin="0,0,34,0"
@@ -244,13 +239,13 @@
                             <Setter Property="Foreground" Value="#FFCCCCCC"/>
                             <Setter Property="FontSize" Value="12"/>
                             <Setter Property="Cursor" Value="Hand"/>
-                            <!-- 鼠标移到标签名上即切换(等价于点一下),不必先点再等 -->
+                            <!-- 榧犳爣绉诲埌鏍囩鍚嶄笂鍗冲垏鎹?绛変环浜庣偣涓€涓?,涓嶅繀鍏堢偣鍐嶇瓑 -->
                             <EventSetter Event="MouseEnter" Handler="OnTabItemMouseEnter"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
                                         <Grid>
-                                            <!-- 选中背景 (Selected) -->
+                                            <!-- 閫変腑鑳屾櫙 (Selected) -->
                                             <Border x:Name="SelectedBd"
                                                     CornerRadius="6"
                                                     Background="#665599FF"
@@ -258,7 +253,7 @@
                                                     BorderThickness="1"
                                                     Opacity="0"
                                                     IsHitTestVisible="False"/>
-                                            <!-- 悬停背景 (Hover) -->
+                                            <!-- 鎮仠鑳屾櫙 (Hover) -->
                                             <Border x:Name="HoverBd"
                                                     CornerRadius="6"
                                                     Background="#26FFFFFF"
@@ -266,7 +261,7 @@
                                                     BorderThickness="1"
                                                     Opacity="0"
                                                     IsHitTestVisible="False"/>
-                                            <!-- 内容呈现 -->
+                                            <!-- 鍐呭鍛堢幇 -->
                                             <Border x:Name="ContentBd"
                                                     CornerRadius="6"
                                                     Padding="{TemplateBinding Padding}"
@@ -338,7 +333,7 @@
                         Click="OnAddTab" ToolTip="{DynamicResource tip.newTab}"/>
             </Grid>
 
-            <!-- 条目列表(当前标签 / Items):按 ViewMode 切换布局。卷起时整块隐藏,只留标题栏 -->
+            <!-- 鏉＄洰鍒楄〃(褰撳墠鏍囩 / Items):鎸?ViewMode 鍒囨崲甯冨眬銆傚嵎璧锋椂鏁村潡闅愯棌,鍙暀鏍囬鏍?-->
             <ScrollViewer x:Name="ItemsScroll"
                           Grid.Row="2"
                           Visibility="{Binding ShowContent, Converter={StaticResource BoolVis}}"
@@ -350,40 +345,40 @@
                 <Grid x:Name="ItemsViewport"
                       Width="{Binding ElementName=ItemsScroll, Path=ViewportWidth}"
                       Background="Transparent">
-                    <!-- 大图标:默认(大方块) -->
+                    <!-- 澶у浘鏍?榛樿(澶ф柟鍧? -->
                     <ItemsControl ItemsSource="{Binding DisplayItems}"
                                   Visibility="{Binding IsLarge, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel ItemWidth="100" Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}" Orientation="Horizontal"/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate><WrapPanel ItemWidth="100" Orientation="Horizontal"/></ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate><ctl:ItemTile IconSize="Large"/></DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <!-- 中等图标 -->
+                    <!-- 涓瓑鍥炬爣 -->
                     <ItemsControl ItemsSource="{Binding DisplayItems}"
                                   Visibility="{Binding IsMedium, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel ItemWidth="84" Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}" Orientation="Horizontal"/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate><WrapPanel ItemWidth="84" Orientation="Horizontal"/></ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate><ctl:ItemTile IconSize="Medium"/></DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <!-- 小图标(横向流式,16px 图标 + 名称) -->
+                    <!-- 灏忓浘鏍?妯悜娴佸紡,16px 鍥炬爣 + 鍚嶇О) -->
                     <ItemsControl ItemsSource="{Binding DisplayItems}"
                                   Visibility="{Binding IsSmall, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}" Orientation="Horizontal"/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate><ctl:ItemTile IconSize="Small"/></DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <!-- 列表(纵向单列) -->
+                    <!-- 鍒楄〃(绾靛悜鍗曞垪) -->
                     <ItemsControl ItemsSource="{Binding DisplayItems}"
                                   Visibility="{Binding IsList, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>
@@ -394,7 +389,7 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <!-- 详细信息:名称/修改时间/大小 -->
+                    <!-- 璇︾粏淇℃伅:鍚嶇О/淇敼鏃堕棿/澶у皬 -->
                     <ItemsControl ItemsSource="{Binding DisplayItems}"
                                   Visibility="{Binding IsDetail, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>
@@ -405,11 +400,11 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <!-- 平铺(图标+名称,横向卡片) -->
+                    <!-- 骞抽摵(鍥炬爣+鍚嶇О,妯悜鍗＄墖) -->
                     <ItemsControl ItemsSource="{Binding DisplayItems}"
                                   Visibility="{Binding IsTile, Converter={StaticResource BoolVis}}">
                         <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate><WrapPanel Width="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ItemsControl}}" Orientation="Horizontal"/></ItemsPanelTemplate>
+                            <ItemsPanelTemplate><WrapPanel Orientation="Horizontal"/></ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate><ctl:ItemTile IconSize="Tile"/></DataTemplate>
@@ -418,8 +413,7 @@
                 </Grid>
             </ScrollViewer>
 
-            <!-- 八方向缩放手柄:覆盖卡片边缘。中间透明区域 hit-test 穿透到下层,不影响交互。
-                 卷起时(没有内容区可缩放)或锁定位置时不显示。 -->
+            <!-- 鍏柟鍚戠缉鏀炬墜鏌?瑕嗙洊鍗＄墖杈圭紭銆備腑闂撮€忔槑鍖哄煙 hit-test 绌块€忓埌涓嬪眰,涓嶅奖鍝嶄氦浜掋€?                 鍗疯捣鏃?娌℃湁鍐呭鍖哄彲缂╂斁)鎴栭攣瀹氫綅缃椂涓嶆樉绀恒€?-->
             <Grid Grid.Row="0" Grid.RowSpan="3" Margin="0"
                   Visibility="{Binding ShowResizeHandles, Converter={StaticResource BoolVis}}">
                 <Grid.Resources>
@@ -459,8 +453,7 @@
     </Border>
 
     <UserControl.ContextMenu>
-        <!-- ContextMenu 不在视觉树中,需显式绑定到 PlacementTarget(本控件)的 DataContext。
-             Header 用 DynamicResource,语言切换时自动刷新。 -->
+        <!-- ContextMenu 涓嶅湪瑙嗚鏍戜腑,闇€鏄惧紡缁戝畾鍒?PlacementTarget(鏈帶浠?鐨?DataContext銆?             Header 鐢?DynamicResource,璇█鍒囨崲鏃惰嚜鍔ㄥ埛鏂般€?-->
         <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
             <MenuItem Header="{DynamicResource menu.view}">
                 <MenuItem Header="{DynamicResource view.large}" Click="OnViewLarge" IsCheckable="True"
@@ -476,10 +469,9 @@
                 <MenuItem Header="{DynamicResource view.tile}" Click="OnViewTile" IsCheckable="True"
                           IsChecked="{Binding ViewMode, Converter={StaticResource ModeEqual}, ConverterParameter={x:Static m:ViewMode.Tile}, Mode=OneWay}"/>
             </MenuItem>
-            <!-- 一键整理桌面:与托盘/桌面右键同一入口,扫桌面新文件并归类进整理盒子 -->
+            <!-- 涓€閿暣鐞嗘闈?涓庢墭鐩?妗岄潰鍙抽敭鍚屼竴鍏ュ彛,鎵闈㈡柊鏂囦欢骞跺綊绫昏繘鏁寸悊鐩掑瓙 -->
             <MenuItem Header="{DynamicResource menu.organize}" Click="OnOrganizeDesktop"/>
-            <!-- 卷起/展开:卷起后鼠标悬停会自动展开、移开自动收起(可在设置里关闭)。
-                 两个菜单项按当前状态二选一显示,动词与即将发生的动作一致。 -->
+            <!-- 鍗疯捣/灞曞紑:鍗疯捣鍚庨紶鏍囨偓鍋滀細鑷姩灞曞紑銆佺Щ寮€鑷姩鏀惰捣(鍙湪璁剧疆閲屽叧闂?銆?                 涓や釜鑿滃崟椤规寜褰撳墠鐘舵€佷簩閫変竴鏄剧ず,鍔ㄨ瘝涓庡嵆灏嗗彂鐢熺殑鍔ㄤ綔涓€鑷淬€?-->
             <MenuItem Header="{DynamicResource box.menu.rollUp}" Click="OnToggleCollapse">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">
@@ -504,7 +496,7 @@
                     </Style>
                 </MenuItem.Style>
             </MenuItem>
-            <!-- 锁定位置:锁定后不能拖动/缩放,避免误移动 -->
+            <!-- 閿佸畾浣嶇疆:閿佸畾鍚庝笉鑳芥嫋鍔?缂╂斁,閬垮厤璇Щ鍔?-->
             <MenuItem Header="{DynamicResource box.menu.lock}" Click="OnToggleLock">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">
@@ -535,7 +527,7 @@
             <MenuItem Header="{DynamicResource box.menu.refreshItems}" Click="OnRefreshItems"/>
             <MenuItem Header="{DynamicResource box.menu.clear}" Click="OnClear"/>
             <Separator/>
-            <!-- 仅标签模式 -->
+            <!-- 浠呮爣绛炬ā寮?-->
             <MenuItem Header="{DynamicResource box.menu.newTab}" Click="OnAddTab">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">
@@ -572,7 +564,7 @@
                     </Style>
                 </MenuItem.Style>
             </MenuItem>
-            <!-- 仅普通模式 -->
+            <!-- 浠呮櫘閫氭ā寮?-->
             <MenuItem Header="{DynamicResource box.menu.toTabbed}" Click="OnConvertToTabbed">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">
@@ -585,7 +577,7 @@
                     </Style>
                 </MenuItem.Style>
             </MenuItem>
-            <!-- 仅标签模式 -->
+            <!-- 浠呮爣绛炬ā寮?-->
             <MenuItem Header="{DynamicResource box.menu.mergeIn}" Click="OnMergeIn">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">

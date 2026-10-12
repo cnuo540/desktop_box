@@ -332,7 +332,102 @@ public class BoxDragMergeTests
             ReadRepositoryFile("src", "DesktopBox", "Resources", file).Should().Contain("x:Key=\"tip.iconSize\"");
     }
 
+    // ---- 切换图标大小后条目区不能变空白(线上问题回归) ----
+
+    [Fact]
+    public void SwitchingIconSizeAtRuntime_KeepsItemsLaidOut()
+    {
+        RunOnSta(() =>
+        {
+            var box = new Box
+            {
+                Name = "B",
+                Width = 400,
+                Height = 300,
+                ViewMode = ViewMode.Large
+            };
+            for (var i = 0; i < 6; i++)
+            {
+                box.Items.Add(new BoxItem
+                {
+                    Type = ItemType.File,
+                    TargetPath = $@"C:\x\f{i}.txt",
+                    DisplayName = $"f{i}.txt"
+                });
+            }
+
+            var vm = new BoxViewModel(box);
+            var control = new BoxControl { DataContext = vm, Width = 400, Height = 300 };
+            Arrange(control);
+
+            vm.SyncViewMode(ViewMode.Medium);   // 等价于点一次"图标大小"按钮(全局广播到盒子)
+            Arrange(control);
+
+            // 切过去的那一档必须真的把条目排出来。
+            // 历史坑:WrapPanel 的 Width 绑着 Collapsed 的 ItemsControl.ActualWidth=0,
+            // 面板宽度被钉成 0 → 条目被挤出可视区 → 条目区整片空白(v1.7.22 线上问题)。
+            AssertItemsPanelFillsViewport(control, expectedTiles: 6);
+        });
+    }
+
+    [Fact]
+    public void RollingUpAndBack_KeepsItemsLaidOut()
+    {
+        RunOnSta(() =>
+        {
+            var box = new Box { Name = "B", Width = 400, Height = 300 };
+            for (var i = 0; i < 4; i++)
+            {
+                box.Items.Add(new BoxItem
+                {
+                    Type = ItemType.File,
+                    TargetPath = $@"C:\x\f{i}.txt",
+                    DisplayName = $"f{i}.txt"
+                });
+            }
+
+            var vm = new BoxViewModel(box);
+            var control = new BoxControl { DataContext = vm, Width = 400, Height = 300 };
+            Arrange(control);
+
+            vm.IsCollapsed = true;      // 卷起:条目区被隐藏
+            Arrange(control);
+            vm.IsCollapsed = false;     // 展开:条目必须回来
+            Arrange(control);
+
+            AssertItemsPanelFillsViewport(control, expectedTiles: 4);
+        });
+    }
+
+    /// <summary>当前可见那一档的条目面板必须占满滚动视口宽度,且磁贴都排出来了。</summary>
+    private static void AssertItemsPanelFillsViewport(BoxControl control, int expectedTiles)
+    {
+        var itemsControl = FindVisualChildren<ItemsControl>(control)
+            .Single(ic => ic.Visibility == Visibility.Visible
+                          && ic is not System.Windows.Controls.Primitives.Selector);
+        var panel = FindVisualChildren<WrapPanel>(itemsControl).FirstOrDefault();
+        panel.Should().NotBeNull("可见档位的条目面板应该是 WrapPanel");
+
+        var tiles = FindVisualChildren<ItemTile>(itemsControl).ToList();        tiles.Should().HaveCount(expectedTiles);
+        tiles.Should().OnlyContain(t => t.ActualWidth > 0 && t.ActualHeight > 0);
+
+        itemsControl.ActualWidth.Should().BeGreaterThan(100);
+        panel!.ActualWidth.Should().BeGreaterThan(
+            itemsControl.ActualWidth * 0.9,
+            "面板宽度不能小于视口宽度(历史上被 Collapsed 元素的 ActualWidth=0 钉死过)");
+    }
+
     // ---- 辅助 ----
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T typed) yield return typed;
+            foreach (var nested in FindVisualChildren<T>(child)) yield return nested;
+        }
+    }
 
     private readonly Mock<IPersistenceService> _store = new();
     private readonly Mock<IIconExtractorService> _icon = new();

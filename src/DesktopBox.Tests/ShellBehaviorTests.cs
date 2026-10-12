@@ -191,8 +191,12 @@ public class ShellBehaviorTests
         xaml.Should().Contain("x:Name=\"ItemsScroll\"");
         xaml.Should().Contain("x:Name=\"ItemsViewport\"");
         xaml.Should().Contain("Path=ViewportWidth");
-        xaml.Should().Contain("AncestorType=ItemsControl");
-        xaml.Should().Contain("ActualWidth");
+        // 面板按滚动视口宽度换行:靠"禁用横向滚动"(视口宽度即约束),而不是给面板设显式 Width。
+        // 历史坑:面板 Width 曾绑 ItemsControl.ActualWidth——该 ItemsControl 一旦是 Collapsed
+        // (切换图标大小后必然如此)ActualWidth 就是 0,面板宽度被钉死成 0,
+        // 于是"点了图标大小按钮,下面的条目整片空白"(v1.7.22 线上问题)。
+        xaml.Should().Contain("HorizontalScrollBarVisibility=\"Disabled\"");
+        xaml.Should().NotContain("AncestorType=ItemsControl");
         // 防布局反馈振荡：垂直滚动条必须恒占位(Visible)。Auto 会在缩放过阈值时
         // 显隐翻转→ViewportWidth 变化→WrapPanel 重排→高度变化→再次翻转，64 磁贴跳行，
         // 透过 layered 窗拉伸成"窗口忽大忽小"。恒占位断环。
