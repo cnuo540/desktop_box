@@ -37,6 +37,9 @@ public sealed class DesktopDropOverlay : IDisposable
 
     public bool DroppedOnDesktop { get; private set; }
 
+    /// <summary>拖放落在桌面时的光标屏幕坐标(物理像素);未落在桌面时为 null。</summary>
+    public (double X, double Y)? DropScreenPosition { get; private set; }
+
     public static DesktopDropOverlay? TryCreate(IEnumerable<Rect> excludedBounds)
     {
         // 与主窗口同策略（Native.User32.ResolveDesktopHost）：DefView 优先保证可见。
@@ -180,17 +183,26 @@ public sealed class DesktopDropOverlay : IDisposable
 
     private void OnDragOverDesktop(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)
-            ? DragDropEffects.Copy
-            : DragDropEffects.None;
+        e.Effects = IsSupportedDrag(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnDropOnDesktop(object sender, DragEventArgs e)
     {
-        if (e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat))
+        if (IsSupportedDrag(e.Data))
         {
             DroppedOnDesktop = true;
+            // 落点用光标屏幕坐标(物理像素,与盒子模型坐标同一坐标系):拖标签出盒时用它决定新盒子位置。
+            try
+            {
+                var cursor = System.Windows.Forms.Cursor.Position;
+                DropScreenPosition = (cursor.X, cursor.Y);
+            }
+            catch
+            {
+                DropScreenPosition = null;
+            }
+
             e.Effects = DragDropEffects.Copy;
         }
         else
@@ -200,6 +212,12 @@ public sealed class DesktopDropOverlay : IDisposable
 
         e.Handled = true;
     }
+
+    /// <summary>本覆盖层接收的拖放数据:盒子里的条目(拖出到桌面=从盒子移除)与标签(拖出=独立成新盒子)。</summary>
+    internal static bool IsSupportedDrag(IDataObject? data) =>
+        data is not null
+        && (data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)
+            || data.GetDataPresent(ItemDragDrop.DragSourceTabFormat));
 
     public void Dispose()
     {

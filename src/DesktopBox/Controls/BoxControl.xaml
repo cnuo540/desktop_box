@@ -21,9 +21,20 @@
             VerticalAlignment="Stretch"
             CornerRadius="10"
             Background="#99000000"
-            BorderBrush="#66FFFFFF"
-            BorderThickness="1"
             ClipToBounds="True">
+        <!-- 边框走 Style:拖动中的盒子悬停在本盒子上(IsMergeTarget)时要高亮成"合并目标" -->
+        <Border.Style>
+            <Style TargetType="Border">
+                <Setter Property="BorderBrush" Value="#66FFFFFF"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsMergeTarget}" Value="True">
+                        <Setter Property="BorderBrush" Value="#FF4FC3F7"/>
+                        <Setter Property="BorderThickness" Value="2"/>
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -115,6 +126,33 @@
                                                 <Setter Property="Data" Value="M7,9 V6.5 A2.5,2.5 0 0 1 12,6.5 V9 M5,9 H14 V17 H5 Z"/>
                                                 <Setter Property="Stroke" Value="#FF4FC3F7"/>
                                                 <Setter Property="StrokeThickness" Value="1.8"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Path.Style>
+                            </Path>
+                        </Button>
+                        <!-- 图标大小:大图标 → 中图标 → 小图标 循环(全局生效,所有盒子一致)。
+                             图标本身反映当前档位:1 个大方块 / 4 个中方块 / 9 个小方块。 -->
+                        <Button x:Name="IconSizeBtn"
+                                Click="OnCycleIconSize"
+                                ToolTip="{Binding IconSizeActionText}"
+                                Width="24" Height="24" Margin="4,0,0,0" Padding="0"
+                                Background="Transparent"
+                                BorderBrush="#66FFFFFF"
+                                Cursor="Hand">
+                            <Path Width="15" Height="15" Stretch="Uniform"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Fill="#FFDDDDDD">
+                                <Path.Style>
+                                    <Style TargetType="Path">
+                                        <Setter Property="Data" Value="M2,2 H14 V14 H2 Z"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ViewMode}" Value="{x:Static m:ViewMode.Medium}">
+                                                <Setter Property="Data" Value="M1,1 H7 V7 H1 Z M9,1 H15 V7 H9 Z M1,9 H7 V15 H1 Z M9,9 H15 V15 H9 Z"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding ViewMode}" Value="{x:Static m:ViewMode.Small}">
+                                                <Setter Property="Data" Value="M1,1 H5 V5 H1 Z M6,1 H10 V5 H6 Z M11,1 H15 V5 H11 Z M1,6 H5 V10 H1 Z M6,6 H10 V10 H6 Z M11,6 H15 V10 H11 Z M1,11 H5 V15 H1 Z M6,11 H10 V15 H6 Z M11,11 H15 V15 H11 Z"/>
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>

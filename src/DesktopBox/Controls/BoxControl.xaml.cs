@@ -139,6 +139,9 @@ public partial class BoxControl : UserControl
 
     private void OnToggleLock(object sender, RoutedEventArgs e) => ToggleLock();
 
+    /// <summary>图标大小按钮:大 → 中 → 小图标循环(全局,所有盒子一致)。</summary>
+    private void OnCycleIconSize(object sender, RoutedEventArgs e) => MainVm.CycleIconSize();
+
     /// <summary>盒子右键 →「一键整理桌面」(与托盘/桌面空白处右键同一命令)。</summary>
     private void OnOrganizeDesktop(object sender, RoutedEventArgs e)
         => MainVm.OrganizeCommand.Execute(null);
@@ -221,6 +224,7 @@ public partial class BoxControl : UserControl
             return;
         }
         if (!Vm.CanMove) return;   // 位置已锁定:不拖动
+        ClearMergeTarget();
         _isDragging = true;
         _dragOrigin = PointToScreen(e.GetPosition(this));
         _boxOrigin = new Point(Vm.X, Vm.Y);   // 记录起点:拖动期间意图位置=起点+累积位移
@@ -243,6 +247,31 @@ public partial class BoxControl : UserControl
             x, y, Math.Min(Vm.Width, 320), Math.Min(Vm.Height, 120));
         Vm.X = cx;
         Vm.Y = cy;
+
+        // 拖动中:指针若落在别的盒子上,高亮它——松手就把本盒子合并进去
+        UpdateMergeTarget(pos.X, pos.Y);
+    }
+
+    // ---- 拖动盒子合并(把一个盒子拖进另一个盒子 = 合并成标签盒子) ----
+    private BoxViewModel? _mergeTarget;
+
+    /// <summary>找出指针下的其它盒子并高亮成"合并目标"。</summary>
+    private void UpdateMergeTarget(double screenX, double screenY)
+    {
+        if (Vm is null) return;
+        var target = BoxHitTest.FindAt(MainVm.Boxes, screenX, screenY, Vm.Id);
+        if (ReferenceEquals(target, _mergeTarget)) return;
+
+        if (_mergeTarget is not null) _mergeTarget.IsMergeTarget = false;
+        _mergeTarget = target;
+        if (_mergeTarget is not null) _mergeTarget.IsMergeTarget = true;
+    }
+
+    /// <summary>清掉合并目标高亮(松手/取消拖动/窗口回收时都要清,避免高亮留在桌面上)。</summary>
+    private void ClearMergeTarget()
+    {
+        _mergeTarget = null;
+        try { BoxHitTest.ClearMergeTargets(MainVm.Boxes); } catch { /* 退出期:容器已不可用 */ }
     }
 
     /// <summary>边缘磁吸(带迟滞):盒子靠近显示器工作区边缘时自动贴合。</summary>
@@ -266,6 +295,16 @@ public partial class BoxControl : UserControl
         if (!_isDragging) return;
         _isDragging = false;
         Mouse.Capture(null);
+
+        // 松手时指针停在别的盒子上 → 把本盒子合并成对方的一个标签(对方随即变成标签盒子)
+        var target = _mergeTarget;
+        ClearMergeTarget();
+        if (target is not null && Vm is not null)
+        {
+            MainVm.MergeIn(target, Vm);
+            return;
+        }
+
         MainVm.ScheduleSave();
     }
 
@@ -273,6 +312,7 @@ public partial class BoxControl : UserControl
     {
         if (!_isDragging) return;
         _isDragging = false;
+        ClearMergeTarget();
         MainVm.ScheduleSave();
     }
 
@@ -402,6 +442,14 @@ public partial class BoxControl : UserControl
             return;
         }
 
+        // 从别的盒子拖来的标签:允许落下(落到本盒子任意位置 = 并入本盒子成为新标签)
+        if (e.Data.GetDataPresent(typeof(BoxTab)))
+        {
+            e.Effects = DragDropEffects.Move;
+            e.Handled = true;
+            return;
+        }
+
         e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent(DataFormats.Text)
             ? DragDropEffects.Copy
             : DragDropEffects.None;
@@ -414,6 +462,15 @@ public partial class BoxControl : UserControl
         if (e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat))
         {
             e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        // 从别的盒子拖来的标签 → 并入本盒子(落在条目区/标签行都算)
+        if (e.Data.GetDataPresent(typeof(BoxTab)) && e.Data.GetData(typeof(BoxTab)) is BoxTab foreign)
+        {
+            TryAcceptForeignTab(foreign);
+            e.Effects = DragDropEffects.Move;
             e.Handled = true;
             return;
         }
@@ -631,7 +688,36 @@ public partial class BoxControl : UserControl
 
         var data = _tabDragData;
         _tabDragData = null;
-        if (data is BoxTab) DragDrop.DoDragDrop(TabList, data, DragDropEffects.Move);
+        if (data is not BoxTab tab || Vm is null) return;
+
+        // 两种落点:
+        //   盒内(<同盒子的标签行>) = 调整标签顺序,见 OnTabListDrop
+        //   盒外(桌面)             = 该标签独立成一个新盒子,见下面的 SplitTabToNewBox
+        // 桌面接收层与"拖条目出盒"共用同一套:整屏透明子窗口 + 在盒子位置挖洞,
+        // 所以落在盒子上时事件仍由盒子自己处理,不会被这层吃掉。
+        var payload = new DataObject();
+        payload.SetData(typeof(BoxTab), tab);
+        payload.SetData(ItemDragDrop.DragSourceTabFormat, tab.Id);
+
+        var boxBounds = MainVm.Boxes
+            .Select(b => new Rect(b.X, b.Y, b.Width, b.Height))
+            .ToList();
+
+        using var desktopDrop = DesktopDropOverlay.TryCreate(boxBounds);
+        try
+        {
+            DragDrop.DoDragDrop(TabList, payload, DragDropEffects.Move);
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "BoxControl.TabDragOut");
+        }
+
+        if (desktopDrop?.DroppedOnDesktop == true && desktopDrop.DropScreenPosition is { } drop
+            && !MainVm.SplitTabToNewBox(Vm, tab, drop.X, drop.Y))
+        {
+            Services.LogService.Info("TabDragOut.Ignored", "只剩一个标签,不拆成独立盒子");
+        }
     }
 
     private void OnTabListDragOver(object sender, DragEventArgs e)
@@ -644,12 +730,29 @@ public partial class BoxControl : UserControl
     {
         if (Vm is null || !e.Data.GetDataPresent(typeof(BoxTab))) return;
         var dragged = e.Data.GetData(typeof(BoxTab)) as BoxTab;
+        if (dragged is null) return;
+
+        // 从别的盒子拖过来的标签 → 并入本盒子成为新标签
+        if (TryAcceptForeignTab(dragged))
+        {
+            e.Handled = true;
+            return;
+        }
+
         var target = Ancestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as BoxTab;
-        if (dragged is null || target is null || ReferenceEquals(dragged, target)) return;
+        if (target is null || ReferenceEquals(dragged, target)) return;
         int oldIdx = Vm.Tabs.IndexOf(dragged);
         int newIdx = Vm.Tabs.IndexOf(target);
         if (oldIdx >= 0 && newIdx >= 0) Vm.Tabs.Move(oldIdx, newIdx);
         MainVm.ScheduleSave();
+    }
+
+    /// <summary>把别处拖来的标签并入本盒子(拖标签到别的盒子上)。同盒子内的拖动不算。</summary>
+    private bool TryAcceptForeignTab(BoxTab dragged)
+    {
+        if (Vm is null || Vm.Tabs.Contains(dragged)) return false;
+        var source = MainVm.Boxes.FirstOrDefault(b => b.Tabs.Contains(dragged));
+        return source is not null && MainVm.MoveTabToBox(source, Vm, dragged);
     }
 
     private void OnTabListPreviewMouseWheel(object sender, MouseWheelEventArgs e)

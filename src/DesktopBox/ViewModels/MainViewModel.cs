@@ -51,6 +51,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>切换全局视图模式(由 BoxControl 右键菜单调用)。</summary>
     public void SetGlobalViewMode(ViewMode mode) => GlobalViewMode = mode;
 
+    /// <summary>图标大小按钮:在大 → 中 → 小图标之间循环(列表/详细信息/平铺只能走右键菜单)。</summary>
+    public void CycleIconSize() => GlobalViewMode = ViewModeText.NextIconSize(GlobalViewMode);
+
     /// <summary>卷起的盒子在鼠标悬停时自动展开、移开自动收起(设置项,持久化)。
     /// BoxControl 在鼠标进出时读取本值;关掉后卷起的盒子只能双击标题栏/右键菜单展开。</summary>
     [ObservableProperty] private bool _hoverExpandCollapsedBoxes = true;
@@ -576,8 +579,58 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         target.SelectedTab = target.Tabs.LastOrDefault();
+        // 合并结果要看得见:目标盒子若处于卷起态,先展开(卷起时标签行是隐藏的)。
+        target.IsCollapsed = false;
+        target.IsMergeTarget = false;
         Boxes.Remove(other);
         ScheduleSave();
+    }
+
+    /// <summary>把一个标签从一个盒子拖到另一个盒子(拖标签到别的盒子上 = 并入对方成为新标签)。
+    /// 源盒子只剩这一个标签时不允许移走(否则源盒子只剩空壳)。只搬引用,不动文件。</summary>
+    public bool MoveTabToBox(BoxViewModel source, BoxViewModel target, BoxTab tab)
+    {
+        if (source.Id == target.Id || !source.Tabs.Contains(tab)) return false;
+        if (source.Tabs.Count <= 1) return false;
+
+        source.Tabs.Remove(tab);
+        foreach (var item in tab.Items)
+            item.BoxId = target.Id;
+        target.Tabs.Add(tab);
+        target.SelectedTab = tab;
+        target.IsCollapsed = false;   // 卷起时看不到标签行,先展开让结果可见
+        target.IsMergeTarget = false;
+        ScheduleSave();
+        return true;
+    }
+
+    /// <summary>把标签盒子里某个标签拖出来,变成落在拖放点上的独立盒子。
+    /// 仅在源盒子还有其它标签时才拆(最后一个标签拆出去等于盒子消失,直接忽略)。
+    /// 只搬引用,不动任何文件。返回是否真的拆了。</summary>
+    public bool SplitTabToNewBox(BoxViewModel source, BoxTab tab, double screenX, double screenY)
+    {
+        if (source.Tabs.Count <= 1 || !source.Tabs.Contains(tab)) return false;
+
+        var (x, y) = SystemParametersHelper.ClampIntoScreens(screenX, screenY);
+        var box = new BoxViewModel(new Box
+        {
+            // 标签的 Header 已是当前语言的显示名;新盒子是用户盒子,不带 Key(不会被当成分类标签)
+            Name = string.IsNullOrWhiteSpace(tab.Header) ? "新盒子" : tab.Header,
+            X = x,
+            Y = y,
+            Width = source.Width,
+            Height = source.Height
+        });
+        foreach (var item in tab.Items.ToList())
+        {
+            item.BoxId = box.Id;
+            box.Items.Add(item);
+        }
+
+        source.Tabs.Remove(tab);   // BoxViewModel.OnTabsChanged 会自动重选标签
+        AddBoxSynced(box);
+        ScheduleSave();
+        return true;
     }
 
     /// <summary>标签盒子拆分为独立盒子:每个标签变成一个盒子,位置略有错开。</summary>
@@ -880,6 +933,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             b.RefreshHeader();
             b.RefreshCollapseActionText();
             b.RefreshLockActionText();
+            b.RefreshIconSizeActionText();
             foreach (var t in b.Tabs) t.RefreshHeader();
         }
     }

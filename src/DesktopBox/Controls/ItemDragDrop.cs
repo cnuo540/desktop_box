@@ -22,4 +22,8 @@ public static class ItemDragDrop
     }
 
     public const string DragSourceItemFormat = "DesktopBox.ItemId";
+
+    /// <summary>拖"标签盒子里某个标签"时的数据格式:放进 BoxTab.Id。
+    /// 用途:拖到桌面 = 该标签独立成一个新盒子(见 BoxControl 的标签拖拽 + DesktopDropOverlay)。</summary>
+    public const string DragSourceTabFormat = "DesktopBox.TabId";
 }

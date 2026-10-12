@@ -33,6 +33,9 @@ public partial class BoxViewModel : ObservableObject
     /// <summary>是否锁定位置(锁定后不可拖动/缩放)。持久化到 boxes.json。</summary>
     [ObservableProperty] private bool _isLocked;
 
+    /// <summary>正被拖动的盒子悬停在本盒子上(松手就把对方合并进来)。纯视图态,不持久化。</summary>
+    [ObservableProperty] private bool _isMergeTarget;
+
     /// <summary>当前是否按卷起态渲染(卷起且未悬停展开)。</summary>
     public bool IsRolled => BoxCollapse.IsRolled(IsCollapsed, IsHoverExpanded);
 
@@ -93,6 +96,29 @@ public partial class BoxViewModel : ObservableObject
 
     /// <summary>语言切换后重算 LockActionText(触发 PropertyChanged)。</summary>
     public void RefreshLockActionText() => OnPropertyChanged(nameof(LockActionText));
+
+    /// <summary>图标大小按钮的提示文本:当前大小 + 点击会切到的大小(大→中→小→大)。</summary>
+    public string IconSizeActionText
+    {
+        get
+        {
+            var currentKey = ViewModeText.ResourceKey(ViewMode);
+            var nextKey = ViewModeText.ResourceKey(ViewModeText.NextIconSize(ViewMode));
+            try
+            {
+                var loc = App.Services.GetRequiredService<ILocalizerService>();
+                return string.Format(loc["tip.iconSize"], loc[currentKey], loc[nextKey]);
+            }
+            catch
+            {
+                // 无 DI 容器时(设计器/单元测试直接构造 VM):退化为资源键,不影响切换本身。
+                return $"Icon size: {currentKey} -> {nextKey}";
+            }
+        }
+    }
+
+    /// <summary>语言切换后重算 IconSizeActionText(触发 PropertyChanged)。</summary>
+    public void RefreshIconSizeActionText() => OnPropertyChanged(nameof(IconSizeActionText));
 
     partial void OnIsCollapsedChanged(bool value) => RefreshCollapseState();
 
@@ -198,6 +224,7 @@ public partial class BoxViewModel : ObservableObject
         OnPropertyChanged(nameof(IsList));
         OnPropertyChanged(nameof(IsDetail));
         OnPropertyChanged(nameof(IsTile));
+        OnPropertyChanged(nameof(IconSizeActionText));
         ViewModeChanged?.Invoke(this);
     }
 
