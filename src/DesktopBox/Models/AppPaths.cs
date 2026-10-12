@@ -17,6 +17,9 @@ public static class AppPaths
     /// <summary>整理盒子 id 清单(organize.json)。</summary>
     public static string OrganizePath => Path.Combine(DataDir, "organize.json");
 
+    /// <summary>被"挪走隐藏"的桌面图标原位置(icon-layout.json)。落盘是为了崩溃/重启后还能还原图标布局。</summary>
+    public static string IconLayoutPath => Path.Combine(DataDir, "icon-layout.json");
+
     /// <summary>图标缓存目录(可重建)。</summary>
     public static string IconCacheDir => Path.Combine(DataDir, "icons");
 

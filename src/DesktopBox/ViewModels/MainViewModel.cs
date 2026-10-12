@@ -22,6 +22,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly IOrganizeService _organize;
     private readonly ICategorizerService _categorizer;
     private readonly IDesktopIconsService _desktopIcons;
+    private readonly IDesktopIconLayoutService? _iconLayout;
     private readonly ILocalizerService _localizer;
     private readonly IShellChangeNotifierService _shellChange;
     private Timer? _debounce;
@@ -83,7 +84,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                          IIconExtractorService icon, IOrganizeService organize,
                          ICategorizerService categorizer,
                          IDesktopIconsService desktopIcons, ILocalizerService localizer,
-                         IShellChangeNotifierService shellChange)
+                         IShellChangeNotifierService shellChange,
+                         IDesktopIconLayoutService? iconLayout = null)
     {
         _store = store;
         _parser = parser;
@@ -91,6 +93,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _organize = organize;
         _categorizer = categorizer;
         _desktopIcons = desktopIcons;
+        _iconLayout = iconLayout;
         _localizer = localizer;
         _shellChange = shellChange;
         // 语言切换后刷新所有程序生成盒子/标签的显示名(Header)
@@ -198,6 +201,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         box.DisplayItems.Add(item);
         ExtractIconAsync(item);   // 单个拖入:后台提取,不阻塞
         ScheduleSave();
+        // 当前处于"隐藏已收纳"状态时,刚收纳进来的桌面项也立刻隐藏,保持一致
+        if (!DesktopIconsVisible) TryParkCollected(item.TargetPath);
     }
 
     /// <summary>从任意盒子(含任意标签)移除一个条目。</summary>
@@ -379,12 +384,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             $"new={newEntries.Count} boxes={Boxes.Count} organizeBox={box.Id} tabs={box.Tabs.Count}");
         if (allItems.Count > 0) ExtractIconsInBackground(allItems);
 
-        // 整理后隐藏桌面图标:盒子已收纳这些图标,桌面再显示就重复了。告知用户如何还原显示。
+        // 整理后把"已收纳"的桌面图标隐藏起来(只隐藏已收纳的;未收纳/新建的照常显示),并告知如何还原。
         bool hidIcons = false;
         if (DesktopIconsVisible)
         {
-            _desktopIcons.SetVisible(false);
-            DesktopIconsVisible = false;
+            SetDesktopIconsVisible(false);
             hidIcons = true;
         }
 
@@ -674,15 +678,131 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _desktopIconsVisible = true;
 
     [RelayCommand]
-    private void ToggleDesktopIcons()
+    private void ToggleDesktopIcons() => SetDesktopIconsVisible(!DesktopIconsVisible);
+
+    /// <summary>隐藏/显示"已收纳"的桌面图标。
+    /// 隐藏 = 把这些图标挪到可视区外(系统只有整层开关,没有按项显隐接口);显示 = 全部挪回原位。
+    /// 未收纳的项、你在桌面上新建的文件夹都不受影响,照常可见。</summary>
+    public void SetDesktopIconsVisible(bool visible)
     {
-        var visible = !DesktopIconsVisible;
-        _desktopIcons.SetVisible(visible);
-        DesktopIconsVisible = visible;
+        if (_iconLayout is null)
+        {
+            // 没有按项隐藏能力时退回旧的整层开关:功能不缺失(只是会连同未收纳的一起隐藏)
+            _desktopIcons.SetVisible(visible);
+            DesktopIconsVisible = visible;
+            return;
+        }
+
+        try
+        {
+            if (visible)
+            {
+                _iconLayout.RestoreAll();
+                _iconLayout.SetSystemIconsVisible(true);
+                _desktopIcons.SetVisible(true);   // 兜底:可能正处于"整层隐藏"的降级状态
+            }
+            else
+            {
+                var candidates = CollectedDesktopPaths()
+                    .Where(DesktopIconLayoutService.IsDesktopItem)
+                    .ToList();
+                var parked = _iconLayout.Park(candidates);
+
+                // 按项隐藏不可用(例如环境不允许跨进程 COM)→ 退回整层开关,至少保持"桌面干净"。
+                // 注意:Park 只会"读到原位置才挪",所以这条路上绝不会把用户的图标挪乱。
+                if (parked == 0 && candidates.Count > 0)
+                {
+                    _desktopIcons.SetVisible(false);
+                    Services.LogService.Warn("DesktopIcons.Fallback",
+                        $"per-item park moved 0 of {candidates.Count} → global hide");
+                }
+
+                _iconLayout.SetSystemIconsVisible(false);
+            }
+
+            DesktopIconsVisible = visible;
+            PersistIconHiding(visible);
+            Services.LogService.Info("DesktopIcons.Set", $"visible={visible} parked={_iconLayout.ParkedCount}");
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.SetDesktopIconsVisible");
+        }
     }
 
-    /// <summary>启动后读取真实状态,刷新按钮颜色。</summary>
-    public void RefreshDesktopIconsState() => DesktopIconsVisible = _desktopIcons.AreIconsVisible;
+    /// <summary>启动时读取状态:优先用配置里的偏好;并兼容旧版"整层隐藏"的遗留状态
+    /// (旧版调系统整层开关,升级后要换成"只隐藏已收纳的",否则桌面会一下子全放出来)。</summary>
+    public void RefreshDesktopIconsState()
+    {
+        if (_iconLayout is null)
+        {
+            DesktopIconsVisible = _desktopIcons.AreIconsVisible;
+            return;
+        }
+
+        try
+        {
+            var preferred = _store.Load().Settings.HideCollectedDesktopIcons;
+            var legacyHidden = !_desktopIcons.AreIconsVisible;
+
+            if (legacyHidden) _desktopIcons.SetVisible(true);   // 先把旧版整层隐藏撤掉
+
+            if (preferred || legacyHidden)
+            {
+                // 启动自愈:先把上次挪走的图标全部还原,再按当前收纳情况重新隐藏 ——
+                // 这样即使上次运行中途崩了,也不会留下"挪到一半"的布局。
+                _iconLayout.RestoreAll();
+                SetDesktopIconsVisible(false);
+                if (!preferred) PersistIconHiding(true);        // 迁移:把偏好写进配置
+            }
+            else
+            {
+                DesktopIconsVisible = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.RefreshDesktopIconsState");
+        }
+    }
+
+    /// <summary>某个条目被放回桌面(从盒子里拖出来)→ 立刻把它的图标挪回原位,让它可见。</summary>
+    public void RestoreItemIcon(string? path)
+    {
+        if (_iconLayout is null || string.IsNullOrWhiteSpace(path)) return;
+        try { _iconLayout.Restore(path); }
+        catch (Exception ex) { App.LogError(ex, "MainViewModel.RestoreItemIcon"); }
+    }
+
+    /// <summary>所有盒子里已收纳的本地路径(是不是桌面项由服务自己判断)。</summary>
+    private IEnumerable<string> CollectedDesktopPaths() =>
+        AllItems()
+            .Select(i => i.TargetPath)
+            .Where(p => !string.IsNullOrWhiteSpace(p)
+                        && !p.StartsWith("::", StringComparison.Ordinal)
+                        && !p.StartsWith("http", StringComparison.OrdinalIgnoreCase));
+
+    private void TryParkCollected(string? path)
+    {
+        if (_iconLayout is null || string.IsNullOrWhiteSpace(path)) return;
+        try { _iconLayout.Park(new[] { path }); }
+        catch (Exception ex) { App.LogError(ex, "MainViewModel.TryParkCollected"); }
+    }
+
+    private void PersistIconHiding(bool hidden)
+    {
+        try
+        {
+            var cfg = _store.Load();
+            if (cfg.Settings.HideCollectedDesktopIcons == hidden) return;
+            cfg.Settings.HideCollectedDesktopIcons = hidden;
+            _store.Save(cfg);
+        }
+        catch (Exception ex)
+        {
+            Services.LogService.Warn("MainViewModel.PersistIconHiding", Services.LogService.Truncate(ex.Message, 160));
+        }
+    }
 
     /// <summary>后台批量提取图标,逐个回到 UI 线程更新(BoxItem.IconCachePath 可观察,磁贴自动刷新)。</summary>
     private void ExtractIconsInBackground(List<BoxItem> items)

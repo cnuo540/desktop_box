@@ -50,7 +50,7 @@
 | 🔳 | **One-click icon size / view** — A title-bar button cycles Large → Medium → **List** globally (the glyph shows the current step: 1 square / 4 squares / 3 bars). |
 | 🖱️ | **Drag to reorganize** — Drag a tab to the desktop to make it a standalone box, or onto another box to join it; drag a whole box onto another box (it highlights in blue) to merge it into a tabbed box. |
 | 🔻 | **Roll up & auto-expand on hover** — Roll a box up to just its title bar (chevron, double-click the title, or context menu); hovering expands it and it rolls back when the pointer leaves. Toggle in Settings. |
-| 👁️ | **Hide/Show desktop icons** — One toggle clears your real desktop icons (purely visual, no files touched). |
+| 👁️ | **Hide/Show *collected* desktop icons** — Only items already in boxes get hidden (purely visual: their icons are parked off-screen and restored later, no files touched). Files/folders you create on the desktop, or drag back out of a box, stay visible. |
 | 🖥️ | **System-icons box** — This PC / Recycle Bin / Control Panel / Network with **real system icons**. |
 | 🖱️ | **Native shell context menu** — Real Windows right-click menu (Open / Properties / Send To / …) via a bundled C++ helper executable. |
 | ♻️ | **Green & portable** — A single ~74 MB exe. Config & icon cache live **next to the exe**; delete everything except the exe and it still runs and regenerates them. |
@@ -69,7 +69,7 @@
 | 🔳 | **一键图标大小 / 视图** — 标题栏按钮循环切换 大图标 → 中图标 → **列表**（全局生效），图示就是当前档位：1 个方块 / 4 个方块 / 3 条横杠。 |
 | 🖱️ | **拖动重排** — 标签拖到桌面 = 独立成新盒子，拖到别的盒子上 = 并入对方；整个盒子拖到另一个盒子上（对方蓝色高亮）= 合并成标签盒子。 |
 | 🔻 | **卷起 + 悬停自动展开** — 盒子可卷起成只剩标题栏(标题栏箭头/双击标题/右键菜单);鼠标悬停自动展开、移开自动收起,可在设置里关闭。 |
-| 👁️ | **隐藏/显示桌面图标** — 一键清空桌面真实图标(纯视觉,不动文件)。 |
+| 👁️ | **隐藏/显示「已收纳」的桌面图标** — 只隐藏已经进了盒子的那些（纯视觉：把它们挪到可视区外，之后挪回，不动文件）；你在桌面新建的、或从盒子里拖出来的都照常可见。 |
 | 🖥️ | **系统图标盒子** — 此电脑/回收站/控制面板/网络,用**真实系统图标**。 |
 | 🖱️ | **原生右键菜单** — 真正的 Windows 右键菜单(打开/属性/发送到/…),由配套 C++ helper EXE 提供。 |
 | ♻️ | **绿色便携** — 单个 ~74MB 的 exe。默认把配置与图标缓存放在**exe 同目录**;若目录不可写,会自动退到 `%LocalAppData%\\DesktopBox`。 |

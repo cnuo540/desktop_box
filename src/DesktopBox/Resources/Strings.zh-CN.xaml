@@ -18,7 +18,7 @@
     <s:String x:Key="menu.newBox">新建盒子</s:String>
     <s:String x:Key="menu.addSysIcons">添加系统图标盒子</s:String>
     <s:String x:Key="menu.organize">一键整理桌面</s:String>
-    <s:String x:Key="menu.toggleIcons">隐藏/显示桌面图标</s:String>
+    <s:String x:Key="menu.toggleIcons">隐藏/显示已收纳的桌面图标</s:String>
     <s:String x:Key="menu.refreshItems">刷新失效图标</s:String>
     <s:String x:Key="menu.settings">设置</s:String>
     <s:String x:Key="menu.openLog">打开日志目录</s:String>
@@ -51,7 +51,7 @@
     <s:String x:Key="box.menu.delete">删除盒子</s:String>
 
     <!-- tooltip -->
-    <s:String x:Key="tip.toggleIcons">显示/隐藏桌面图标</s:String>
+    <s:String x:Key="tip.toggleIcons">隐藏/显示已收纳的桌面图标(未收纳的照常可见)</s:String>
     <s:String x:Key="tip.newTab">新建标签</s:String>
     <s:String x:Key="tip.rollUp">卷起盒子(鼠标悬停时自动展开)</s:String>
     <s:String x:Key="tip.expandBox">展开盒子</s:String>
@@ -122,7 +122,7 @@
     <s:String x:Key="dialog.organize.empty.done">没有新的桌面文件需要整理,已全部归类。</s:String>
     <s:String x:Key="dialog.organize.done">已整理 {0} 个新文件到「桌面整理」盒子{1}。&#x0a;(文件未移动,图标稍候加载。)</s:String>
     <s:String x:Key="dialog.organize.sysIconsTag">(并添加系统图标)</s:String>
-    <s:String x:Key="dialog.organize.hidIcons">&#x0a;&#x0a;为避免桌面图标与盒子里的重复显示,已自动隐藏桌面图标。&#x0a;如需重新显示桌面图标:点托盘菜单的「隐藏/显示桌面图标」,或盒子标题栏右侧的眼睛图标。</s:String>
+    <s:String x:Key="dialog.organize.hidIcons">&#x0a;&#x0a;为避免桌面图标与盒子里的重复显示,已把盒子里这些**已收纳**的桌面图标隐藏起来。&#x0a;(只隐藏已收纳的:你在桌面上新建的文件夹、以后拖出盒子的文件都照常可见。)&#x0a;需要全部显示时:点托盘菜单的「隐藏/显示已收纳的桌面图标」,或盒子标题栏右侧的眼睛图标。</s:String>
 
     <!-- 分类(一键整理生成的标签名)-->
     <s:String x:Key="cat.apps">应用程序</s:String>

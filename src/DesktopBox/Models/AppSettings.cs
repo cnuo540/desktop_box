@@ -11,4 +11,8 @@ public class AppSettings
     public ViewMode GlobalViewMode { get; set; } = ViewMode.Large;
     /// <summary>卷起的盒子在鼠标悬停时自动展开、移开自动收起。默认开启。</summary>
     public bool HoverExpandCollapsedBoxes { get; set; } = true;
+
+    /// <summary>是否隐藏"已收纳"的桌面图标(按项隐藏:程序把这些图标挪到可视区外)。
+    /// 未收纳的、桌面上新建的照常显示。默认关闭。</summary>
+    public bool HideCollectedDesktopIcons { get; set; }
 }

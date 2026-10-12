@@ -97,9 +97,9 @@ public partial class ItemTile : UserControl
 
         if (desktopDrop?.DroppedOnDesktop == true && ReferenceEquals(Item, item))
         {
-            // 拖到桌面 = 把这个条目从盒子里移除(文件本来就在桌面原地,只是不再由盒子显示)。
-            // 注意:这里**不动**桌面图标显隐 —— 系统的"显示/隐藏桌面图标"是整层开关,
-            // 为了让这一个文件可见而放开全部图标会把桌面刷满(用户明确反馈过)。见使用说明。
+            // 拖到桌面 = 把这个条目从盒子里移除(文件本来就在桌面原地)。它不再是"已收纳",
+            // 所以把它的桌面图标立刻挪回原位 —— 只恢复这一个,不会把其它已收纳的图标也放出来。
+            vm.RestoreItemIcon(item.TargetPath);
             RemoveFromBox();
         }
         e.Handled = true;

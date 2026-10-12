@@ -213,6 +213,8 @@ public partial class App : Application
         s.AddSingleton<IOrganizeService, OrganizeService>();
         s.AddSingleton<ILocalizerService, LocalizerService>();
         s.AddSingleton<IDesktopIconsService, DesktopIconsService>();
+        s.AddSingleton<IDesktopIconPositions, Native.DesktopIconPositions>();
+        s.AddSingleton<IDesktopIconLayoutService, DesktopIconLayoutService>();
         s.AddSingleton<IShellChangeNotifierService, ShellChangeNotifierService>();
         s.AddSingleton<IShellMenuRunner, ShellMenuProcessRunner>();
         s.AddSingleton<FirstLetterKeyboardNavigator>();
