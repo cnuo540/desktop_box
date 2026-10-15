@@ -31,7 +31,9 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
         IReadOnlyList<string>? prefixArguments = null)
     {
         _helperPath = helperPath;
-        _timeout = timeout ?? TimeSpan.FromMinutes(2);
+        // 上限要够长:选"属性"时 helper 会一直泵消息陪属性框到用户关掉它为止,
+        // 早点杀会把开着的属性框一起带走(菜单本身用得再久也就几十秒)。
+        _timeout = timeout ?? TimeSpan.FromMinutes(30);
         _prefixArguments = prefixArguments ?? [];
     }
 

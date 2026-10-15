@@ -617,6 +617,23 @@ public class ShellBehaviorTests
     }
 
     [Fact]
+    public void NativeShellMenu_KeepsPumpingUntilThePropertySheetCloses()
+    {
+        var source = File.ReadAllText(FindRepositoryFile("src", "DesktopBox.ShellMenu", "DesktopBox.ShellMenu.cpp"));
+
+        // 属性框是非阻塞弹出、且挂在本进程上的:
+        // ① owner 必须传 nullptr —— 传临时钩子窗口的话,随后的 DestroyWindow 会把它一起带走
+        source.Should().Contain("sei.hwnd = nullptr;");
+        // ② 弹完不能马上退出,要泵消息陪到它关闭(实测:调用方一退属性框就没了)
+        source.Should().Contain("if (shown) PumpWhileSheetOpen();");
+        source.Should().Contain("static void PumpWhileSheetOpen()");
+
+        // helper 的存活上限要够长:默认 2 分钟会把用户开着的属性框杀掉
+        var runner = File.ReadAllText(FindRepositoryFile("src", "DesktopBox", "Services", "ShellMenuProcessRunner.cs"));
+        runner.Should().Contain("TimeSpan.FromMinutes(30)");
+    }
+
+    [Fact]
     public void NativeShellMenu_UninitializesComOnTheMenuThread()
     {
         var sourcePath = FindRepositoryFile("src", "DesktopBox.ShellMenu", "DesktopBox.ShellMenu.cpp");

@@ -56,17 +56,72 @@ static bool IsEmptyRecycleBinCommand(const std::wstring& verb) {
     return EqualsVerb(verb.c_str(), L"empty");
 }
 
-static bool ShowShellProperties(const wchar_t* path, HWND owner) {
+/// 属性框是**非阻塞**弹出、且挂在调用方进程上的:
+/// ① owner 必须传 nullptr —— 传我们那个临时钩子窗口的话,后面 DestroyWindow 会把它一起带走;
+/// ② 本进程必须活着并继续泵消息,直到属性框关闭(实测:调用方一退属性框就没了,
+///    用户看到的就是"点属性没反应")。
+static bool ShowShellProperties(const wchar_t* path) {
     if (!path || !*path) return false;
 
     SHELLEXECUTEINFOW sei = {};
     sei.cbSize = sizeof(sei);
     sei.fMask = SEE_MASK_INVOKEIDLIST;
-    sei.hwnd = owner;
+    sei.hwnd = nullptr;
     sei.lpVerb = L"properties";
     sei.lpFile = path;
     sei.nShow = SW_SHOWNORMAL;
     return ShellExecuteExW(&sei) != FALSE;
+}
+
+static void DbgLog(const char* step, long hr = 0);   // 实现在下面;这里先声明,供 PumpWhileSheetOpen 用
+
+/// 本进程当前有没有**可见的**顶层对话框(#32770)——用来判断属性框还开着没。
+/// 必须带可见性过滤:有些组件会在进程里常驻隐藏的 #32770,只看类名会秒判"已经出现/已经关闭",
+/// 于是 helper 立刻退出,把还没显示出来的属性框一起带走(实测踩到)。
+static bool HasOwnDialog() {
+    struct Ctx { DWORD pid; bool found; };
+    Ctx ctx = { GetCurrentProcessId(), false };
+    EnumWindows([](HWND hwnd, LPARAM lp) -> BOOL {
+        auto* ctx = reinterpret_cast<Ctx*>(lp);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid != ctx->pid) return TRUE;
+        if (!IsWindowVisible(hwnd)) return TRUE;
+        wchar_t cls[64] = {};
+        if (GetClassNameW(hwnd, cls, _countof(cls)) > 0 && wcscmp(cls, L"#32770") == 0) {
+            ctx->found = true;
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.found;
+}
+
+/// 先等属性框出现,再一直泵消息到它关闭(上限兜底,防止卡住不退)。
+/// 等待给足:第三方属性页(压缩/安全软件/IDE 等扩展)第一次加载可能要几秒,等太短会以为"没弹"
+/// 而立刻退出 —— 进程一退属性框就被带走,又回到"点了没反应"。
+static void PumpWhileSheetOpen() {
+    const DWORD start = GetTickCount();
+    const DWORD kAppearWaitMs = 25000;               // 等它出现
+    const DWORD kMaxWaitMs = 30 * 60 * 1000;         // 属性框最多陪用户 30 分钟
+    bool seen = false;
+    DWORD elapsed = 0;
+    for (;;) {
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+
+        const bool open = HasOwnDialog();
+        if (open) seen = true;
+        if (seen && !open) break;                    // 属性框关了 → 收工
+        elapsed = GetTickCount() - start;
+        if (!seen && elapsed >= kAppearWaitMs) break;
+        if (elapsed >= kMaxWaitMs) break;
+        Sleep(30);
+    }
+
+    char buf[96];
+    sprintf_s(buf, "PumpWhileSheetOpen seen=%d elapsedMs=%lu", (int)seen, (unsigned long)elapsed);
+    DbgLog(buf);
 }
 
 static std::wstring GetCommandVerb(IContextMenu* cm, UINT idCmd) {
@@ -134,7 +189,7 @@ static bool SetFileClipboard(const wchar_t* path, DWORD dropEffect) {
     return ok;
 }
 
-static void DbgLog(const char* step, long hr = 0) {
+static void DbgLog(const char* step, long hr) {
 #ifdef DESKTOPBOX_SHELLMENU_DIAG
     wchar_t exePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
@@ -248,9 +303,12 @@ static int ShowShellMenu(const wchar_t* path, int screenX, int screenY, const Me
         const UINT idCmd = cmd - DBX_CMD_FIRST;
         const std::wstring verb = GetCommandVerb(cm, idCmd);
         if (IsPropertiesCommand(verb)) {
-            const bool shown = ShowShellProperties(path, hwndMenu);
+            // 由 helper 自己弹(宿主里调 shell 的 COM 会 AV 崩进程),但弹完**不能马上退**:
+            // 属性框挂在本进程上,要泵消息陪到它关闭。见 ShowShellProperties 的说明。
+            const bool shown = ShowShellProperties(path);
             DbgLog(shown ? "ShowShellProperties-OK" : "ShowShellProperties-FAIL");
-            if (shown) result = 0;
+            if (shown) PumpWhileSheetOpen();
+            result = 0;
             goto cleanup;
         }
         if (IsEmptyRecycleBinCommand(verb)) {
