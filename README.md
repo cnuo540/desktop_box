@@ -1,3 +1,4 @@
+<img width="1042" height="472" alt="205" src="https://github.com/user-attachments/assets/632fa34c-2ff7-4b46-81ff-f06437175871" />
 <div align="center">
 
 # 🗂️ DesktopBox
@@ -80,6 +81,8 @@
 ## 🖼️ Screenshots · 截图
 
 <p align="center">
+  <img width="1042" height="472" alt="205" src="https://github.com/user-attachments/assets/3296381d-cf63-4fbb-bd6f-6d191bda07e3" />
+
   <img src="docs/screenshot.png" alt="DesktopBox 桌面整理效果" width="440">
 </p>
 
