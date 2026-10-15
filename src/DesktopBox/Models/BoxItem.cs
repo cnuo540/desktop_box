@@ -9,7 +9,10 @@ public partial class BoxItem : ObservableObject
     public Guid BoxId { get; set; }
     public ItemType Type { get; set; }
     public string TargetPath { get; set; } = "";
-    public string DisplayName { get; set; } = "";
+
+    /// <summary>界面上显示的名字。必须是可观察的:改名(改真实文件名)之后要立刻刷新,
+    /// 否则会出现"文件已经改了、盒子里还是旧名字"。</summary>
+    [ObservableProperty] private string _displayName = "";
 
     [ObservableProperty] private string? _iconCachePath;
 

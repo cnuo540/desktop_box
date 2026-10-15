@@ -12,6 +12,7 @@ DefaultDirName={localappdata}\Programs\DesktopBox
 DefaultGroupName=DesktopBox
 DisableProgramGroupPage=yes
 DisableDirPage=yes
+SetupIconFile=src\DesktopBox\Resources\DesktopBox.ico
 UninstallDisplayIcon={app}\DesktopBox.exe
 OutputDir=release
 OutputBaseFilename=DesktopBoxSetup
@@ -24,6 +25,7 @@ PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 WizardStyle=modern
 CompressionThreads=auto
+VersionInfoVersion={#MyAppVersion}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

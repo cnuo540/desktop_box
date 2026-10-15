@@ -1,5 +1,6 @@
 using System.Windows;
 using DesktopBox.Controls;
+using DesktopBox.Models;
 using FluentAssertions;
 
 namespace DesktopBox.Tests;
@@ -42,5 +43,44 @@ public class DesktopDropOverlayTests
             });
 
         rects.Should().BeEmpty();
+    }
+
+    /// <summary>卷起的盒子在屏幕只占标题栏那么高,挖洞必须按实际高度来。
+    /// 按模型里存的完整高度挖洞时,卷起后腾出来的那片空白会被漏给 explorer ——
+    /// 拖到那里它就当成"把文件复制到同一个文件夹",弹「源文件名和目标文件名相同」。</summary>
+    [Fact]
+    public void OccupiedBoxRects_CollapsedBoxOnlyOccupiesItsHeader()
+    {
+        var box = Box(10, 20, 240, 300, collapsed: true);
+
+        var rects = DesktopDropOverlay.OccupiedBoxRects(new[] { box });
+
+        rects.Should().ContainSingle();
+        rects[0].Should().Be(new Rect(10, 20, 240, BoxCollapse.DefaultHeaderHeight));
+    }
+
+    [Fact]
+    public void OccupiedBoxRects_HoverExpandedAndNormalBoxKeepFullHeight()
+    {
+        var hoverExpanded = Box(10, 20, 240, 300, collapsed: true);
+        hoverExpanded.IsHoverExpanded = true;
+        var normal = Box(10, 20, 240, 300, collapsed: false);
+
+        DesktopDropOverlay.OccupiedBoxRects(new[] { hoverExpanded, normal })
+            .Should().AllBeEquivalentTo(new Rect(10, 20, 240, 300));
+    }
+
+    [Fact]
+    public void OccupiedBoxRects_SkipsBoxesWithNoArea()
+    {
+        DesktopDropOverlay.OccupiedBoxRects(new[] { Box(0, 0, 0, 0, collapsed: false) })
+            .Should().BeEmpty();
+    }
+
+    private static ViewModels.BoxViewModel Box(double x, double y, double w, double h, bool collapsed)
+    {
+        var vm = new ViewModels.BoxViewModel(new Models.Box { X = x, Y = y, Width = w, Height = h, IsCollapsed = collapsed });
+        vm.CollapsedHeight = BoxCollapse.DefaultHeaderHeight;
+        return vm;
     }
 }

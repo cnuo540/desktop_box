@@ -17,4 +17,8 @@ public interface IDesktopIconPositions
 
     /// <summary>把图标移动到指定位置。</summary>
     bool TrySet(IntPtr item, int x, int y);
+
+    /// <summary>批量移动图标(IFolderView.SelectAndPositionItems 一次提交,1500+ 项也只走一次 COM)。
+    /// 返回成功放置的数量。</summary>
+    int TrySetMany(IReadOnlyList<(IntPtr Item, int X, int Y)> items);
 }

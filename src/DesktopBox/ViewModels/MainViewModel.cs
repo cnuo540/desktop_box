@@ -8,6 +8,7 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DesktopBox.Models;
+using DesktopBox.Native;
 using DesktopBox.Controls;
 using DesktopBox.Services;
 using DesktopBox.Views;
@@ -23,8 +24,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly ICategorizerService _categorizer;
     private readonly IDesktopIconsService _desktopIcons;
     private readonly IDesktopIconLayoutService? _iconLayout;
-    /// <summary>是否启用"按项隐藏"(见 AppSettings.UsePerItemIconHiding,默认关)。</summary>
-    private bool _perItemIconHiding;
+    private readonly IDesktopWatcherService? _desktopWatcher;
+    private readonly IDesktopScannerService? _scanner;
+    /// <summary>旧版"按属性隐藏"的痕迹只擦一次。</summary>
+    private bool _attributeHidingRestored;
     private readonly ILocalizerService _localizer;
     private readonly IShellChangeNotifierService _shellChange;
     private Timer? _debounce;
@@ -63,6 +66,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnHoverExpandCollapsedBoxesChanged(bool value) => ScheduleSave();
 
+    /// <summary>盒子背景的不透明度(设置项,持久化)。只作用于背景色 —— 图标和文字不跟着变淡。</summary>
+    [ObservableProperty] private double _boxOpacity = 1.0;
+
+    partial void OnBoxOpacityChanged(double value) => ScheduleSave();
+
     /// <summary>把新建/加载的盒子加入集合并同步当前全局视图模式。</summary>
     private void AddBoxSynced(BoxViewModel box)
     {
@@ -87,7 +95,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                          ICategorizerService categorizer,
                          IDesktopIconsService desktopIcons, ILocalizerService localizer,
                          IShellChangeNotifierService shellChange,
-                         IDesktopIconLayoutService? iconLayout = null)
+                         IDesktopIconLayoutService? iconLayout = null,
+                         IDesktopWatcherService? desktopWatcher = null,
+                         IDesktopScannerService? scanner = null)
     {
         _store = store;
         _parser = parser;
@@ -96,12 +106,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _categorizer = categorizer;
         _desktopIcons = desktopIcons;
         _iconLayout = iconLayout;
+        _desktopWatcher = desktopWatcher;
+        _scanner = scanner;
         _localizer = localizer;
         _shellChange = shellChange;
         // 语言切换后刷新所有程序生成盒子/标签的显示名(Header)
         _localizer.LanguageChanged += OnLanguageChanged;
         // 系统图标自动刷新:回收站清空/还原、此电脑盘符变化等 shell 通知 → 重新提取受影响图标
         _shellChange.SystemIconChanged += OnSystemIconChanged;
+        // 桌面上新出现的文件要立刻可见(explorer 自己不会画外部新建的桌面文件)
+        if (_desktopWatcher is not null) _desktopWatcher.DesktopItemAppeared += OnDesktopItemAppeared;
     }
 
     private void OnLanguageChanged(object? sender, EventArgs e) => RefreshAllHeaders();
@@ -113,9 +127,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         Boxes.Clear();
         var cfg = _store.Load();
-        _perItemIconHiding = cfg.Settings.UsePerItemIconHiding;
         GlobalViewMode = cfg.Settings.GlobalViewMode;
         HoverExpandCollapsedBoxes = cfg.Settings.HoverExpandCollapsedBoxes;
+        BoxOpacity = Math.Clamp(cfg.Settings.BoxOpacity, 0.1, 1.0);
 
         // 迁移系统图标 item 的旧 CLSID → SystemIcons.cs 当前定义。
         // 历史遗留:旧版用过的 CLSID(如网络曾是 F02C2A56,在 Win11 上已无效)仍存在老 boxes.json 里,
@@ -204,18 +218,111 @@ public partial class MainViewModel : ObservableObject, IDisposable
         box.DisplayItems.Add(item);
         ExtractIconAsync(item);   // 单个拖入:后台提取,不阻塞
         ScheduleSave();
-        // 当前处于"隐藏已收纳"状态时,刚收纳进来的桌面项也立刻隐藏,保持一致
-        if (!DesktopIconsVisible) TryParkCollected(item.TargetPath);
+        RaiseLooseItemsChanged();   // 它进盒了 → 桌面层不再画它
     }
 
-    /// <summary>从任意盒子(含任意标签)移除一个条目。</summary>
+    /// <summary>给盒子里的条目改名 —— 改的是真实的文件名/文件夹名,条目随后指向新路径。
+    /// 目录窗口里立刻跟着变。返回是否改名成功。</summary>
+    public bool RenameItem(BoxItem item, string? newName)
+    {
+        if (item is null) return false;
+        if (item.Type is ItemType.SystemIcon or ItemType.Url) return false;
+        if (item.TargetPath.StartsWith("::", StringComparison.Ordinal)) return false;
+
+        var path = item.TargetPath;
+        var name = (newName ?? string.Empty).Trim();
+        var dest = TryRenamePath(path, name, out var error);
+        if (dest is null)
+        {
+            ReportRenameFailure(name, error);
+            return false;
+        }
+
+        item.TargetPath = dest;
+        item.DisplayName = OrganizeDisplayName(dest);
+        item.IconCachePath = null;      // 名字变了:图标按新路径重取
+        ExtractIconAsync(item);
+        ScheduleSave();
+        Services.LogService.Info("Item.Rename", $"{Path.GetFileName(path)} -> {name}");
+        return true;
+    }
+
+    /// <summary>给桌面上没进盒子的散落项改名(它没有 BoxItem,只有路径)。返回新路径。</summary>
+    public string? RenameDesktopPath(string path, string? newName)
+    {
+        var name = (newName ?? string.Empty).Trim();
+        var dest = TryRenamePath(path, name, out var error);
+        if (dest is null)
+        {
+            ReportRenameFailure(name, error);
+            return null;
+        }
+
+        Services.LogService.Info("Desktop.Rename", $"{Path.GetFileName(path)} -> {name}");
+        RaiseLooseItemsChanged();       // 桌面层照着新名字重画
+        return dest;
+    }
+
+    /// <summary>改真实文件名。成功返回新路径;失败返回 null 并用 <paramref name="error"/> 说明原因
+    /// (invalid / exists / "" 表示没什么可做)。</summary>
+    private static string? TryRenamePath(string path, string name, out string error)
+    {
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(path) || name.Length == 0) return null;
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            error = "invalid";
+            return null;
+        }
+
+        var parent = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(parent)) return null;
+
+        var dest = Path.Combine(parent, name);
+        if (string.Equals(dest, path, StringComparison.OrdinalIgnoreCase)) return null;
+        if (File.Exists(dest) || Directory.Exists(dest))
+        {
+            error = "exists";
+            return null;
+        }
+
+        try
+        {
+            if (Directory.Exists(path)) Directory.Move(path, dest);
+            else File.Move(path, dest);
+            return dest;
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.TryRenamePath");
+            return null;
+        }
+    }
+
+    private void ReportRenameFailure(string name, string error)
+    {
+        var message = error switch
+        {
+            "invalid" => _localizer["dialog.renameItem.invalid"],
+            "exists" => string.Format(_localizer["dialog.renameItem.exists"], name),
+            _ => null
+        };
+        if (message is null) return;
+
+        Services.LogService.Warn("Item.Rename", message);
+        // 没有 UI 上下文时(单测)只记日志:ShowDialog 会把调用线程一直挂住。
+        if (Application.Current is not null) InputDialog.Inform(message);
+    }
+
+    /// <summary>从任意盒子(含任意标签)移除一个条目。它不再"已收纳"→ 桌面层会重新把它画出来。</summary>
     public void RemoveItemAnywhere(BoxItem item)
     {
+        if (item is null) return;
         foreach (var box in Boxes)
         {
-            if (box.Items.Remove(item)) { ScheduleSave(); return; }
+            if (box.Items.Remove(item)) { RaiseLooseItemsChanged(); ScheduleSave(); return; }
             foreach (var t in box.Tabs)
-                if (t.Items.Remove(item)) { ScheduleSave(); return; }
+                if (t.Items.Remove(item)) { RaiseLooseItemsChanged(); ScheduleSave(); return; }
         }
     }
 
@@ -254,6 +361,122 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     // ---- 选中态 + 批量操作(跨盒子):所有 BoxItem.IsSelected 汇总 ----
+
+    /// <summary>把一批路径移到回收站(等同 explorer 里按 Delete),并把盒子里指向它们的条目一并撤掉。
+    /// 返回真正删掉的数量。**进回收站、可还原**,不做永久删除。</summary>
+    public int MoveToRecycleBin(IEnumerable<string>? paths)
+    {
+        var targets = (paths ?? Enumerable.Empty<string>())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Where(p => !p.StartsWith("::", StringComparison.Ordinal))
+            .Where(p => !p.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            .Where(p => File.Exists(p) || Directory.Exists(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (targets.Count == 0) return 0;
+
+        if (!Shell32.MoveToRecycleBin(targets, IntPtr.Zero))
+        {
+            Services.LogService.Warn("Item.Delete", $"移到回收站失败: {targets.Count} 项");
+            return 0;
+        }
+
+        Services.LogService.Info("Item.Delete", $"已移到回收站 {targets.Count} 项");
+
+        foreach (var path in targets)
+        {
+            var stale = AllItems()
+                .Where(i => string.Equals(i.TargetPath, path, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var item in stale) RemoveItemAnywhere(item);
+        }
+
+        RaiseLooseItemsChanged();
+        ScheduleSave();
+        return targets.Count;
+    }
+
+    /// <summary>按条目 Id 找条目(跨盒子/跨标签)。盒内拖拽重排时用它认出"拖的是哪一条"。</summary>
+    public BoxItem? FindItemById(Guid id) => AllItems().FirstOrDefault(i => i.Id == id);
+
+    /// <summary>盒内重排(整组):把这几条按原顺序挪到指定插入位置。返回是否真的动了。</summary>
+    public bool MoveItemsToIndex(IReadOnlyList<BoxItem> items, int targetIndex)
+    {
+        if (items is null || items.Count == 0) return false;
+        if (items.Count == 1) return MoveItemToIndex(items[0], targetIndex);
+
+        var moved = false;
+        var index = targetIndex;
+        foreach (var item in items)
+        {
+            if (MoveItemToIndex(item, index))
+            {
+                moved = true;
+                index++;                      // 下一条紧挨着它
+            }
+        }
+
+        return moved;
+    }
+
+    /// <summary>把一组条目挪到另一个盒子(按落点顺序插进去)。返回真正挪动的条数。</summary>
+    public int MoveItemsToBox(IReadOnlyList<BoxItem> items, BoxViewModel target, int targetIndex)
+    {
+        if (items is null || items.Count == 0 || target is null) return 0;
+
+        var moved = 0;
+        var index = targetIndex;
+        foreach (var item in items)
+        {
+            if (item is null) continue;
+            if (item.BoxId == target.Id) continue;      // 本来就在这个盒子里
+
+            RemoveItemAnywhere(item);
+            item.BoxId = target.Id;
+            var list = target.DisplayItems;
+            var at = Math.Clamp(index, 0, list.Count);
+            list.Insert(at, item);
+            index = at + 1;
+            moved++;
+        }
+
+        if (moved > 0)
+        {
+            Services.LogService.Info("Box.MoveIn",
+                $"{moved} 项 → {Services.LogService.Truncate(target.Header)}");
+            ScheduleSave();
+            RaiseLooseItemsChanged();
+        }
+
+        return moved;
+    }
+
+    /// <summary>盒内重排:把条目挪到指定插入位置(只在它所属盒子的当前标签里动)。
+    /// <paramref name="targetIndex"/> 是"要插到第几个之前"的语义,和拖放落点一致。返回是否真的动了。</summary>
+    public bool MoveItemToIndex(BoxItem item, int targetIndex)
+    {
+        if (item is null) return false;
+
+        foreach (var box in Boxes)
+        {
+            var items = box.DisplayItems;
+            var from = items.IndexOf(item);
+            if (from < 0) continue;
+
+            var to = targetIndex;
+            if (to > from) to--;                        // 它自己被摘出去后,后面的索引前移
+            to = Math.Clamp(to, 0, items.Count - 1);
+            if (to == from) return false;
+
+            items.Move(from, to);
+            ScheduleSave();
+            Services.LogService.Info("Box.Reorder",
+                $"{from} -> {to} box={Services.LogService.Truncate(box.Header)}");
+            return true;
+        }
+
+        return false;
+    }
 
     /// <summary>遍历所有盒子(含标签)的条目。选中操作/批量操作用。</summary>
     public IEnumerable<BoxItem> AllItems()
@@ -387,12 +610,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
             $"new={newEntries.Count} boxes={Boxes.Count} organizeBox={box.Id} tabs={box.Tabs.Count}");
         if (allItems.Count > 0) ExtractIconsInBackground(allItems);
 
-        // 整理后把"已收纳"的桌面图标隐藏起来(只隐藏已收纳的;未收纳/新建的照常显示),并告知如何还原。
+        // 整理后把桌面图标藏起来(桌面层只画未收纳的项),并告知如何还原。
         bool hidIcons = false;
         if (DesktopIconsVisible)
         {
             SetDesktopIconsVisible(false);
             hidIcons = true;
+        }
+        else
+        {
+            RaiseLooseItemsChanged();   // 已处于隐藏状态:刚收录的这些项要从桌面层消失
         }
 
         string msg;
@@ -408,7 +635,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 sysAdded ? _localizer["dialog.organize.sysIconsTag"] : "");
         }
         if (hidIcons) msg += _localizer["dialog.organize.hidIcons"];
-        InputDialog.Inform(msg);
+        // 整理结果是"成功类"提示 → 用 2 秒自动消失的提示条,不再要求点确定(用户要求)
+        ToastWindow.Show(msg);
     }
 
     /// <summary>新建分类标签并加入盒子。catKey 是分类稳定 key(cat.xxx);Name 用当前语言翻译作可读备份。</summary>
@@ -680,57 +908,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>当前桌面图标是否可见(可观察:按钮颜色据此变化)。</summary>
     [ObservableProperty] private bool _desktopIconsVisible = true;
 
-    /// <summary>按项隐藏是否可用:服务已注入 + 配置开关打开(默认关,见 AppSettings.UsePerItemIconHiding)。
-    /// 关着时一律走系统整层开关 —— 不碰桌面视图 COM。</summary>
-    private bool PerItemHidingAvailable => _iconLayout is not null && _perItemIconHiding;
+    /// <summary>"未收纳的桌面项"集合变了(新拖进来/被收纳/被移除/桌面层要重画)。</summary>
+    public event EventHandler? LooseItemsChanged;
 
     [RelayCommand]
     private void ToggleDesktopIcons() => SetDesktopIconsVisible(!DesktopIconsVisible);
 
-    /// <summary>隐藏/显示"已收纳"的桌面图标。
-    /// 隐藏 = 把这些图标挪到可视区外(系统只有整层开关,没有按项显隐接口);显示 = 全部挪回原位。
-    /// 未收纳的项、你在桌面上新建的文件夹都不受影响,照常可见。</summary>
+    /// <summary>隐藏/显示桌面上的原生图标。
+    /// 隐藏 = 直接关掉 explorer 的桌面图标层(整层开关):<b>目录窗口照旧、文件属性一概不碰</b>;
+    /// 桌面上的"未收纳项"由 DesktopLayerWindow 自己画(对齐 Coodesker 的 _cls_desk_ 做法)。
+    /// 显示 = 把原生图标层开回来。</summary>
     public void SetDesktopIconsVisible(bool visible)
     {
-        var layout = PerItemHidingAvailable ? _iconLayout : null;
-        if (layout is null)
-        {
-            // 按项隐藏未启用/不可用 → 走系统整层开关(稳定,已长期验证)
-            _desktopIcons.SetVisible(visible);
-            DesktopIconsVisible = visible;
-            return;
-        }
-
         try
         {
-            if (visible)
-            {
-                layout.RestoreAll();
-                layout.SetSystemIconsVisible(true);
-                _desktopIcons.SetVisible(true);   // 兜底:可能正处于"整层隐藏"的降级状态
-            }
-            else
-            {
-                var candidates = CollectedDesktopPaths()
-                    .Where(DesktopIconLayoutService.IsDesktopItem)
-                    .ToList();
-                var parked = layout.Park(candidates);
+            if (!visible) RestoreAttributeHidingOnce();   // 擦掉旧版"按属性隐藏"留下的属性和设置
 
-                // 按项隐藏不可用(例如环境不允许跨进程 COM)→ 退回整层开关,至少保持"桌面干净"。
-                // 注意:Park 只会"读到原位置才挪",所以这条路上绝不会把用户的图标挪乱。
-                if (parked == 0 && candidates.Count > 0)
-                {
-                    _desktopIcons.SetVisible(false);
-                    Services.LogService.Warn("DesktopIcons.Fallback",
-                        $"per-item park moved 0 of {candidates.Count} → global hide");
-                }
-
-                layout.SetSystemIconsVisible(false);
-            }
-
+            _desktopIcons.SetVisible(visible);
+            _iconLayout?.SetSystemIconsVisible(visible);  // 系统图标走注册表,和桌面图标层不是一套
             DesktopIconsVisible = visible;
-            PersistIconHiding(visible);
-            Services.LogService.Info("DesktopIcons.Set", $"visible={visible} parked={layout.ParkedCount}");
+            PersistIconHiding(!visible);
+            RaiseLooseItemsChanged();
+            Services.LogService.Info("DesktopIcons.Set", $"visible={visible} loose={LooseDesktopItems().Count}");
         }
         catch (Exception ex)
         {
@@ -738,36 +937,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>启动时读取状态:优先用配置里的偏好;并兼容旧版"整层隐藏"的遗留状态
-    /// (旧版调系统整层开关,升级后要换成"只隐藏已收纳的",否则桌面会一下子全放出来)。</summary>
+    /// <summary>启动时按配置里的偏好应用"隐藏/显示桌面图标"。</summary>
     public void RefreshDesktopIconsState()
     {
-        var layout = PerItemHidingAvailable ? _iconLayout : null;
-        if (layout is null)
-        {
-            DesktopIconsVisible = _desktopIcons.AreIconsVisible;
-            return;
-        }
-
         try
         {
             var preferred = _store.Load().Settings.HideCollectedDesktopIcons;
-            var legacyHidden = !_desktopIcons.AreIconsVisible;
-
-            if (legacyHidden) _desktopIcons.SetVisible(true);   // 先把旧版整层隐藏撤掉
-
-            if (preferred || legacyHidden)
-            {
-                // 启动自愈:先把上次挪走的图标全部还原,再按当前收纳情况重新隐藏 ——
-                // 这样即使上次运行中途崩了,也不会留下"挪到一半"的布局。
-                layout.RestoreAll();
-                SetDesktopIconsVisible(false);
-                if (!preferred) PersistIconHiding(true);        // 迁移:把偏好写进配置
-            }
-            else
-            {
-                DesktopIconsVisible = true;
-            }
+            SetDesktopIconsVisible(!preferred);
         }
         catch (Exception ex)
         {
@@ -775,32 +951,201 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>某个条目被放回桌面(从盒子里拖出来)→ 立刻把它的图标挪回原位,让它可见。</summary>
-    public void RestoreItemIcon(string? path)
+    /// <summary>桌面上"没被收纳进盒子"的项(文件/文件夹)。桌面层就照这几个画图标。</summary>
+    public IReadOnlyList<string> LooseDesktopItems()
     {
-        if (!PerItemHidingAvailable || string.IsNullOrWhiteSpace(path)) return;
-        var layout = _iconLayout;
-        if (layout is null) return;
-        try { layout.Restore(path); }
-        catch (Exception ex) { App.LogError(ex, "MainViewModel.RestoreItemIcon"); }
+        if (_scanner is null) return Array.Empty<string>();
+        try
+        {
+            return _scanner.ScanDesktop().Where(p => !IsCollected(p)).ToList();
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.LooseDesktopItems");
+            return Array.Empty<string>();
+        }
     }
 
-    /// <summary>所有盒子里已收纳的本地路径(是不是桌面项由服务自己判断)。</summary>
-    private IEnumerable<string> CollectedDesktopPaths() =>
-        AllItems()
-            .Select(i => i.TargetPath)
-            .Where(p => !string.IsNullOrWhiteSpace(p)
-                        && !p.StartsWith("::", StringComparison.Ordinal)
-                        && !p.StartsWith("http", StringComparison.OrdinalIgnoreCase));
+    private void RaiseLooseItemsChanged() => LooseItemsChanged?.Invoke(this, EventArgs.Empty);
 
-    private void TryParkCollected(string? path)
+    /// <summary>旧版"按属性隐藏"把已收纳项标成了 Hidden、并把资源管理器的"显示隐藏项目"关掉了。
+    /// 改成"整层隐藏 + 自绘桌面层"之后这些痕迹都要还回去:属性还原原样、设置还原成用户原来的值。
+    /// 每次启动最多做一次(记录清空后就是空操作)。</summary>
+    private void RestoreAttributeHidingOnce()
     {
-        if (!PerItemHidingAvailable || string.IsNullOrWhiteSpace(path)) return;
-        var layout = _iconLayout;
-        if (layout is null) return;
-        try { layout.Park(new[] { path }); }
-        catch (Exception ex) { App.LogError(ex, "MainViewModel.TryParkCollected"); }
+        if (_attributeHidingRestored || _iconLayout is null) return;
+        _attributeHidingRestored = true;
+        try
+        {
+            var restored = _iconLayout.RestoreAll();
+            _iconLayout.SetExplorerShowHidden(true);
+            if (restored > 0)
+                Services.LogService.Info("DesktopIcons.Migrate",
+                    $"已还原 {restored} 个桌面项的属性,并恢复\"显示隐藏项目\"");
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.RestoreAttributeHidingOnce");
+        }
     }
+
+    /// <summary>条目被拖到桌面上 = 出盒(对齐 Coodesker):从盒子移除 + 文件落到桌面,
+    /// 然后让桌面层重画 —— 它一变成"未收纳",就会在桌面上被画出来。</summary>
+    public void HandleItemDroppedOnDesktop(BoxItem item)
+        => HandleItemsDroppedOnDesktop(new List<BoxItem> { item });
+
+    /// <summary>整组拖到桌面:每条都出盒 + 落到桌面,最后只重画一次。</summary>
+    public void HandleItemsDroppedOnDesktop(IReadOnlyList<BoxItem> items)
+    {
+        if (items is null || items.Count == 0) return;
+
+        try
+        {
+            foreach (var item in items)
+            {
+                if (item is null) continue;
+                var source = item.TargetPath;
+                RemoveItemAnywhere(item);          // 先出盒:之后它就不在"已收纳"名单里了
+                PlaceOnDesktopIfMissing(source);   // 落下效果是 Copy:不在桌面的文件复制过去
+            }
+
+            RaiseLooseItemsChanged();
+            ScheduleSave();
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.HandleItemsDroppedOnDesktop");
+        }
+    }
+
+    /// <summary>拖到桌面的落地效果是"复制":条目指向的文件不在桌面时复制一份过去,
+    /// 否则桌面上根本不会出现它。返回它在桌面上的路径(失败返回 null)。</summary>
+    private static string? PlaceOnDesktopIfMissing(string? source)
+    {
+        if (string.IsNullOrWhiteSpace(source)) return null;
+        if (source.StartsWith("::", StringComparison.Ordinal)) return null;     // 系统图标没有对应文件
+        if (source.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return null;
+
+        try
+        {
+            if (!File.Exists(source) && !Directory.Exists(source)) return null;
+            if (DesktopIconLayoutService.IsDesktopItem(source)) return source;  // 本来就在桌面,不用复制
+
+            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            if (string.IsNullOrWhiteSpace(desktop)) return null;
+
+            var name = Path.GetFileName(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var dest = UniqueSibling(Path.Combine(desktop, name));
+            if (Directory.Exists(source)) CopyDirectory(source, dest);
+            else File.Copy(source, dest, overwrite: false);
+            Services.LogService.Info("Desktop.DragOut", $"copied {source} -> {dest}");
+            return dest;
+        }
+        catch (Exception ex)
+        {
+            Services.LogService.Warn("Desktop.DragOut", Services.LogService.Truncate(ex.Message, 160));
+            return null;
+        }
+    }
+
+    /// <summary>外部把文件拖到了我们的桌面层上(桌面空白处的拖放仍归 explorer 管)。
+    /// 按拖放效果放进桌面目录,然后让桌面层重画。</summary>
+    public void HandleFilesDroppedOnDesktop(IEnumerable<string> sources, bool move)
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        if (string.IsNullOrWhiteSpace(desktop)) return;
+
+        foreach (var source in sources)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(source)) continue;
+                if (DesktopIconLayoutService.IsDesktopItem(source)) continue;   // 本来就在桌面,不用搬
+                if (!File.Exists(source) && !Directory.Exists(source)) continue;
+
+                var name = Path.GetFileName(source.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                var dest = UniqueSibling(Path.Combine(desktop, name));
+                if (Directory.Exists(source))
+                {
+                    if (move) Directory.Move(source, dest);
+                    else CopyDirectory(source, dest);
+                }
+                else if (move)
+                {
+                    File.Move(source, dest);
+                }
+                else
+                {
+                    File.Copy(source, dest, overwrite: false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Services.LogService.Warn("Desktop.Drop", Services.LogService.Truncate(ex.Message, 160));
+            }
+        }
+
+        RaiseLooseItemsChanged();
+    }
+
+    /// <summary>重名时在文件名后加 (2)/(3)…,不覆盖桌面上已有的同名文件。</summary>
+    private static string UniqueSibling(string path)
+    {
+        if (!File.Exists(path) && !Directory.Exists(path)) return path;
+
+        var dir = Path.GetDirectoryName(path) ?? string.Empty;
+        var name = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+        for (var i = 2; i < 1000; i++)
+        {
+            var candidate = Path.Combine(dir, $"{name} ({i}){ext}");
+            if (!File.Exists(candidate) && !Directory.Exists(candidate)) return candidate;
+        }
+        return path;
+    }
+
+    private static void CopyDirectory(string source, string dest)
+    {
+        Directory.CreateDirectory(dest);
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(dest, Path.GetRelativePath(source, file));
+            var parent = Path.GetDirectoryName(target);
+            if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
+            File.Copy(file, target, overwrite: false);
+        }
+    }
+
+    /// <summary>桌面目录里冒出了新项(拖进来、别的程序新建)。监听在后台线程,这里转回 UI 线程。</summary>
+    private void OnDesktopItemAppeared(object? sender, string path)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            HandleDesktopItemAppeared(path);
+            return;
+        }
+        dispatcher.BeginInvoke(new Action(() => HandleDesktopItemAppeared(path)));
+    }
+
+    /// <summary>桌面目录一变(新增/删除/改名)就让桌面层重画:未收纳的项会被画出来,
+    /// 已收纳的项不画(它们只在盒子里出现)。</summary>
+    private void HandleDesktopItemAppeared(string path)
+    {
+        if (_disposed || string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            Services.LogService.Info("Desktop.Watch", $"changed path={path}");
+            RaiseLooseItemsChanged();
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.HandleDesktopItemAppeared");
+        }
+    }
+
+    private bool IsCollected(string path) =>
+        AllItems().Any(i => string.Equals(i.TargetPath, path, StringComparison.OrdinalIgnoreCase));
 
     private void PersistIconHiding(bool hidden)
     {
@@ -1028,6 +1373,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var cfg = new AppConfig { Settings = existing.Settings };
             cfg.Settings.GlobalViewMode = GlobalViewMode;
             cfg.Settings.HoverExpandCollapsedBoxes = HoverExpandCollapsedBoxes;
+        cfg.Settings.BoxOpacity = Math.Clamp(BoxOpacity, 0.1, 1.0);
             int order = 0;
             // 快照:避免后台线程枚举时集合被 UI 线程修改
             foreach (var b in Boxes.ToList())
@@ -1078,6 +1424,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Interlocked.Exchange(ref _debounce, null)?.Dispose();
         _localizer.LanguageChanged -= OnLanguageChanged;
         _shellChange.SystemIconChanged -= OnSystemIconChanged;
+        if (_desktopWatcher is not null) _desktopWatcher.DesktopItemAppeared -= OnDesktopItemAppeared;
         GC.SuppressFinalize(this);
     }
 }

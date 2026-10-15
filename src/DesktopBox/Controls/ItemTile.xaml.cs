@@ -17,6 +17,10 @@ public partial class ItemTile : UserControl
     private static readonly SemaphoreSlim ShellMenuGate = new(1, 1);
     private Point _dragStart;
     private bool _dragCandidate;
+    /// <summary>这一下按下时"暂时不动选中态",等松手没拖走再塌成单选(见 SelectionClickPolicy)。</summary>
+    private bool _collapseOnMouseUp;
+    /// <summary>这次按下已经变成拖拽了 —— 松手时就不该再塌陷(拖完保持整组选中)。</summary>
+    private bool _dragStarted;
 
     /// <summary>磁贴渲染尺寸/布局(由盒子 ViewMode 决定)。变化时重排内部元素。</summary>
     public static readonly DependencyProperty IconSizeProperty =
@@ -41,6 +45,9 @@ public partial class ItemTile : UserControl
         Loaded += (_, _) =>
         {
             try { WpfUiAnimationGuard.UnfreezeSubtree(this); } catch { }
+            // WPF 的落点判定用"鼠标正下方那个元素",而 AllowDrop 不继承:整棵子树一起打开,
+            // 否则把文件拖到图标正上方会被拒。
+            DropTargets.EnableOnSubtree(this);
         };
         DataContextChanged += (_, _) =>
         {
@@ -51,6 +58,59 @@ public partial class ItemTile : UserControl
         PreviewMouseLeftButtonDown += OnTileMouseDown;
         PreviewMouseMove += OnTileMouseMove;
         PreviewMouseLeftButtonUp += OnTileMouseUp;
+
+        // 落在磁贴上的文件/图标也要能收进来 —— 否则拖到"已有图标"那一片时系统会显示禁止光标。
+        AllowDrop = true;
+        DragOver += OnTileFileDragOver;
+        Drop += OnTileFileDrop;
+    }
+
+    /// <summary>磁贴上的拖入:只接"外部文件/桌面层图标"(FileDrop)。
+    /// 盒内条目拖拽(内部格式)一律不拦 —— 让它冒泡到 BoxControl,由它决定是"落回本盒子 = 重排"还是"禁止"。</summary>
+    private void OnTileFileDragOver(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)) return;
+
+        var ok = e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetDataPresent(DataFormats.Text);
+        e.Effects = ok ? e.AllowedEffects : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnTileFileDrop(object sender, DragEventArgs e)
+    {
+        if (Item is null) return;
+        // 盒内条目拖拽交给 BoxControl(盒内重排)
+        if (e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)) return;
+
+        var vm = App.Services.GetRequiredService<ViewModels.MainViewModel>();
+        var box = vm.Boxes.FirstOrDefault(b => b.Id == Item.BoxId);
+        if (box is null)
+        {
+            e.Handled = true;
+            return;
+        }
+
+        Services.LogService.Info("Drop.Tile", $"落入磁贴 header={Services.LogService.Truncate(box.Header)}");
+
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] paths)
+        {
+            foreach (var path in paths.Take(500))
+            {
+                if (!string.IsNullOrWhiteSpace(path)) vm.AddItemToBox(box, path);
+            }
+            e.Effects = DragDropEffects.Copy;
+        }
+        else if (e.Data.GetData(DataFormats.Text) is string text && !string.IsNullOrWhiteSpace(text))
+        {
+            vm.AddItemToBox(box, text.Trim());
+            e.Effects = DragDropEffects.Copy;
+        }
+        else
+        {
+            e.Effects = DragDropEffects.None;
+        }
+
+        e.Handled = true;
     }
 
     private void OnTileMouseDown(object sender, MouseButtonEventArgs e)
@@ -63,8 +123,17 @@ public partial class ItemTile : UserControl
         }
         _dragStart = e.GetPosition(null);
         _dragCandidate = ItemDragDrop.CanDragAsFile(Item);
+        _collapseOnMouseUp = false;
+        _dragStarted = false;
+
         var vm = App.Services.GetRequiredService<ViewModels.MainViewModel>();
-        vm.HandleTileClick(Item, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+        var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+
+        // 多选之后按住其中一条往外拖要走整组:这一下先不塌成单选,否则拖拽载荷只剩它自己。
+        _collapseOnMouseUp = SelectionClickPolicy.DeferCollapseOnPress(ctrl, Item.IsSelected, vm.GetSelectedItems().Count);
+        if (_collapseOnMouseUp) return;
+
+        vm.HandleTileClick(Item, ctrl);
     }
 
     private void OnTileMouseMove(object sender, MouseEventArgs e)
@@ -79,34 +148,67 @@ public partial class ItemTile : UserControl
             return;
 
         _dragCandidate = false;
-        var data = ItemDragDrop.CreateFileDropData(item);
+        _dragStarted = true;
+
         var vm = App.Services.GetRequiredService<ViewModels.MainViewModel>();
-        var boxBounds = vm.Boxes
-            .Select(b => new Rect(b.X, b.Y, b.Width, b.Height))
-            .ToList();
+        // 按住的那条在选中集合里 → 整组一起拖(explorer 也是这么干的);否则就拖这一条
+        var selection = vm.GetSelectedItems();
+        var dragged = selection.Contains(item) && selection.Count > 1
+            ? selection
+            : new List<BoxItem> { item };
+
+        // DesktopDropOverlay 负责桌面落点并由 ViewModel 复制/恢复文件；不附带
+        // FileDrop，避免 Explorer 同时执行一次原生复制。
+        var data = ItemDragDrop.CreateDesktopDropData(dragged);
+        var boxBounds = DesktopDropOverlay.OccupiedBoxRects(vm.Boxes);
 
         using var desktopDrop = DesktopDropOverlay.TryCreate(boxBounds);
         try
         {
-            DragDrop.DoDragDrop(this, data, DragDropEffects.Copy);
+            // 允许的效果必须和落点的有交集:拖到桌面 = Copy(落盘/复制),落回本盒子 = Move(盒内重排)。
+            // 只给 Copy 的话盒内重排会被系统判成"禁止"(实测踩过)。
+            Services.LogService.Info("ItemTile.DragStart",
+                $"count={dragged.Count} path={Services.LogService.Truncate(item.TargetPath)} allowed=Copy|Move");
+            DragDrop.DoDragDrop(this, data, DragDropEffects.Copy | DragDropEffects.Move);
         }
         catch (Exception ex)
         {
             App.LogError(ex, "ItemTile.DragOut");
         }
+        finally
+        {
+            // DoDragDrop 的模态循环可能吞掉 mouseup:拖完就地把状态收干净,免得下一次点击误塌。
+            _dragStarted = false;
+            _collapseOnMouseUp = false;
+        }
 
         if (desktopDrop?.DroppedOnDesktop == true && ReferenceEquals(Item, item))
         {
-            // 拖到桌面 = 把这个条目从盒子里移除(文件本来就在桌面原地)。它不再是"已收纳",
-            // 所以把它的桌面图标立刻挪回原位 —— 只恢复这一个,不会把其它已收纳的图标也放出来。
-            vm.RestoreItemIcon(item.TargetPath);
-            RemoveFromBox();
+            // 拖到桌面 = 出盒(参考 Coodesker):从盒子移除 + 文件不在桌面则复制过去。
+            // 按住的那条在选中集合里时,整组一起出盒。
+            vm.HandleItemsDroppedOnDesktop(dragged);
         }
         e.Handled = true;
     }
 
     private void OnTileMouseUp(object sender, MouseButtonEventArgs e)
-        => _dragCandidate = false;
+    {
+        _dragCandidate = false;
+        if (_dragStarted)
+        {
+            _dragStarted = false;
+            _collapseOnMouseUp = false;
+            return;
+        }
+
+        if (!_collapseOnMouseUp) return;
+        _collapseOnMouseUp = false;
+
+        // 按住之后原地松手(没拖走)= 普通单击:这时候才把多选塌成这一条
+        if (Item is null) return;
+        var vm = App.Services.GetRequiredService<ViewModels.MainViewModel>();
+        vm.HandleTileClick(Item, false);
+    }
 
     private void SetFallback()
     {
@@ -259,7 +361,7 @@ public partial class ItemTile : UserControl
         FallbackText.FontSize = fallbackFont;
     }
 
-    private BoxItem? Item => DataContext as BoxItem;
+    internal BoxItem? Item => DataContext as BoxItem;
 
     private void OnDoubleClick(object sender, MouseButtonEventArgs e) => OpenItem();
 
@@ -322,7 +424,8 @@ public partial class ItemTile : UserControl
                 try
                 {
                     var runner = App.Services.GetRequiredService<IShellMenuRunner>();
-                    var helperResult = await runner.ShowAsync(item.TargetPath, (int)pt.X, (int)pt.Y);
+                    var helperResult = await runner.ShowAsync(item.TargetPath, (int)pt.X, (int)pt.Y,
+                        ShellMenuCommands.RemoveFromBox | ShellMenuCommands.Rename);
                     switch (helperResult.Status)
                     {
                         case ShellMenuRunStatus.StartFailed:
@@ -331,6 +434,9 @@ public partial class ItemTile : UserControl
                             break;
                         case ShellMenuRunStatus.RemoveFromBox:
                             RemoveFromBox();
+                            return;
+                        case ShellMenuRunStatus.Rename:
+                            PromptRename(item);
                             return;
                         case ShellMenuRunStatus.TargetDeleted:
                             await RefreshAfterDeleteAsync(item);
@@ -375,6 +481,22 @@ public partial class ItemTile : UserControl
         {
             ShellMenuGate.Release();
         }
+    }
+
+    /// <summary>右键菜单里选了"重命名":在名字上就地改(explorer 那种),不再弹对话框。
+    /// 回车确认、Esc 取消、点到别处也算确认。</summary>
+    private void PromptRename(BoxItem item)
+    {
+        var anchor = Views.InlineRenameBox.ScreenRectOf(NameText);
+        if (anchor.IsEmpty) anchor = Views.InlineRenameBox.ScreenRectOf(this);
+        if (anchor.IsEmpty) return;
+
+        var current = System.IO.Path.GetFileName(item.TargetPath);
+        _ = new Views.InlineRenameBox(current, anchor, NameText.FontSize > 0 ? NameText.FontSize : 12, name =>
+        {
+            if (string.IsNullOrWhiteSpace(name)) return;
+            App.Services.GetRequiredService<ViewModels.MainViewModel>().RenameItem(item, name);
+        });
     }
 
     private void ShowFallbackMenu()

@@ -10,6 +10,7 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
 {
     public const int RemoveFromBoxExitCode = 0x7000;
     public const int TargetDeletedExitCode = 0x7002;
+    public const int RenameExitCode = 0x7003;
 
     private readonly string _helperPath;
     private readonly TimeSpan _timeout;
@@ -38,6 +39,7 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
         string path,
         int screenX,
         int screenY,
+        ShellMenuCommands commands = ShellMenuCommands.RemoveFromBox,
         CancellationToken cancellationToken = default)
     {
         var startInfo = new ProcessStartInfo
@@ -51,6 +53,10 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
         startInfo.ArgumentList.Add(path);
         startInfo.ArgumentList.Add(screenX.ToString(CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add(screenY.ToString(CultureInfo.InvariantCulture));
+        // 第 4 个参数只在"不止默认的从盒子移除"时才带:老 helper 只认 3 个参数,
+        // 默认路径保持不带,升级不同步也不会把菜单打坏。
+        if (commands != ShellMenuCommands.RemoveFromBox)
+            startInfo.ArgumentList.Add(RenderCommands(commands));
 
         Process? process = null;
         try
@@ -100,6 +106,7 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
             {
                 0 => new(ShellMenuRunStatus.Completed, process.ExitCode),
                 RemoveFromBoxExitCode => new(ShellMenuRunStatus.RemoveFromBox, process.ExitCode),
+                RenameExitCode => new(ShellMenuRunStatus.Rename, process.ExitCode),
                 TargetDeletedExitCode => new(ShellMenuRunStatus.TargetDeleted, process.ExitCode),
                 _ => new(ShellMenuRunStatus.Crashed, process.ExitCode)
             };
@@ -124,6 +131,17 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
                 process.Dispose();
             }
         }
+    }
+
+    /// <summary>把额外命令渲染成 helper 认的逗号串;"-" 表示什么都不加。</summary>
+    private static string RenderCommands(ShellMenuCommands commands)
+    {
+        if (commands == ShellMenuCommands.None) return "-";
+
+        var parts = new List<string>(2);
+        if (commands.HasFlag(ShellMenuCommands.Rename)) parts.Add("rename");
+        if (commands.HasFlag(ShellMenuCommands.RemoveFromBox)) parts.Add("remove");
+        return parts.Count == 0 ? "-" : string.Join(",", parts);
     }
 
     private static async Task KillAndWaitAsync(Process process)

@@ -103,7 +103,7 @@ public class RenameAndDesktopVisibilityTests
     }
 
     [Fact]
-    public void DraggingAnItemOutToTheDesktop_DoesNotTouchDesktopIconVisibility()
+    public void DraggingAnItemOutToTheDesktop_GoesThroughHandleItemDroppedOnDesktop()
     {
         var tile = ReadRepositoryFile("src", "DesktopBox", "Controls", "ItemTile.xaml.cs");
         var start = tile.IndexOf("DroppedOnDesktop == true", StringComparison.Ordinal);
@@ -112,11 +112,67 @@ public class RenameAndDesktopVisibilityTests
         end.Should().BeGreaterThan(start);
         var body = tile[start..end];
 
-        // 拖出只是"从盒子移除";系统图标显隐是整层开关,放开它会把桌面刷满(用户反馈过),
-        // 所以这里必须保持不碰显隐。
-        body.Should().Contain("RemoveFromBox()");
+        // 出盒逻辑集中在 ViewModel:复制到桌面/恢复可见/通知 Shell 都在那里。
+        // 磁贴代码里仍禁止直接 SetVisible —— 整层开关不能在拖放回调里乱动(用户反馈过刷满桌面),
+        // ShowLayerAndHideCollected 负责"只让拖出项可见、其余继续按属性隐藏"。
+        body.Should().Contain("HandleItemsDroppedOnDesktop");
         body.Should().NotContain("EnsureDesktopIconsVisible");
         body.Should().NotContain("SetVisible");
+    }
+
+    [Fact]
+    public void HandleItemDroppedOnDesktop_OnlyTakesItOutOfTheBox_AndRerendersTheLayer()
+    {
+        var vm = ReadRepositoryFile("src", "DesktopBox", "ViewModels", "MainViewModel.cs");
+
+        vm.Should().Contain("public void HandleItemDroppedOnDesktop(BoxItem item)");
+        vm.Should().Contain("RemoveItemAnywhere(item)");
+        vm.Should().Contain("RaiseLooseItemsChanged()");
+        // 落下效果是 Copy:不在桌面的文件复制过去,否则桌面上没有它
+        vm.Should().Contain("PlaceOnDesktopIfMissing(source)");
+
+        var start = vm.IndexOf("public void HandleItemDroppedOnDesktop(BoxItem item)", StringComparison.Ordinal);
+        var end = vm.IndexOf("private static string? PlaceOnDesktopIfMissing", start, StringComparison.Ordinal);
+        end.Should().BeGreaterThan(start);
+        var body = vm[start..end];
+
+        // 出盒不再需要动图标层、也不必再通知 shell —— 桌面图标现在由我们自己的桌面层画
+        body.Should().NotContain("SetVisible");
+        body.Should().NotContain("SHChangeNotify");
+        body.Should().NotContain("SetAttributes");
+    }
+
+    [Fact]
+    public void HidingIcons_UsesTheNativeLayerSwitch_AndNeverTouchesFileAttributes()
+    {
+        var vm = ReadRepositoryFile("src", "DesktopBox", "ViewModels", "MainViewModel.cs");
+
+        var start = vm.IndexOf("public void SetDesktopIconsVisible(bool visible)", StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0);
+        var end = vm.IndexOf("public void RefreshDesktopIconsState", start, StringComparison.Ordinal);
+        end.Should().BeGreaterThan(start);
+        var body = vm[start..end];
+
+        body.Should().Contain("_desktopIcons.SetVisible(visible)", "隐藏 = 关掉 explorer 的桌面图标层");
+        body.Should().Contain("RestoreAttributeHidingOnce()", "旧版按属性隐藏留下的属性和设置要还回去");
+
+        // 整个 ViewModel 里都不该再有"按属性隐藏"那套 —— 它会把目录窗口一起藏掉(用户明确不要)
+        vm.Should().NotContain("HideByAttribute");
+        vm.Should().NotContain("SetExplorerShowHidden(false)");
+        vm.Should().NotContain("SetFileAttributes");
+    }
+
+    [Fact]
+    public void DesktopLayer_ClipsItselfToTheIconCells_SoTheRestOfTheDesktopStaysExplorers()
+    {
+        // 桌面层的窗口区域必须是"图标矩形并集":图标之间的空白处照旧归 explorer,
+        // 否则右键桌面菜单、从资源管理器往桌面拖文件都会失效。
+        var layer = ReadRepositoryFile("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+
+        layer.Should().Contain("SetWindowRgn");
+        layer.Should().Contain("RGN_OR");
+        layer.Should().Contain("HWND_BOTTOM", "桌面层排在最底,盒子窗口压在它上面");
+        layer.Should().Contain("Background = null", "空白处不该有我们的任何绘制");
     }
 
     // ---- 改名后界面(渲染出来的文字)必须真的变 ----

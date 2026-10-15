@@ -76,14 +76,14 @@ public class HeaderClockAndHoverTests
         var actionsAt = xaml.IndexOf("x:Name=\"HeaderActions\"", StringComparison.Ordinal);
         var lockAt = xaml.IndexOf("x:Name=\"LockBtn\"", StringComparison.Ordinal);
         var collapseAt = xaml.IndexOf("x:Name=\"CollapseBtn\"", StringComparison.Ordinal);
-        var eyeAt = xaml.IndexOf("x:Name=\"ToggleIconsBtn\"", StringComparison.Ordinal);
+        var settingsAt = xaml.IndexOf("x:Name=\"SettingsBtn\"", StringComparison.Ordinal);
 
         clockAt.Should().BeGreaterThanOrEqualTo(0);
         nameAt.Should().BeGreaterThan(clockAt);        // 时间在名称左边
         actionsAt.Should().BeGreaterThan(nameAt);      // 操作按钮在名称右边
         lockAt.Should().BeGreaterThan(actionsAt);
         collapseAt.Should().BeGreaterThan(lockAt);
-        eyeAt.Should().BeGreaterThan(collapseAt);      // 眼睛按钮在最右
+        settingsAt.Should().BeGreaterThan(collapseAt); // 设置按钮在最右
 
         // 原先名称左侧的蓝色小方块(色标)已按要求移除
         // (缩放手柄模板里还有透明 Rectangle,所以只断言"色标那个"的特征)

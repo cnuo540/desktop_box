@@ -84,7 +84,7 @@ public class ItemTileLayoutTests
     }
 
     [Fact]
-    public void BoxControl_ToggleIconsButtonIsNotCoveredByNorthEastResizeThumb()
+    public void BoxControl_SettingsButtonIsNotCoveredByNorthEastResizeThumb()
     {
         RunOnSta(() =>
         {
@@ -92,7 +92,7 @@ public class ItemTileLayoutTests
             var control = new BoxControl { DataContext = box, Width = box.Width, Height = box.Height };
             Arrange(control);
 
-            var button = ((Button)control.FindName("ToggleIconsBtn"));
+            var button = ((Button)control.FindName("SettingsBtn"));
             var buttonCenter = button.TranslatePoint(
                 new Point(button.ActualWidth / 2, button.ActualHeight / 2),
                 control);

@@ -10,7 +10,20 @@ publish/
 publish-fixed/
 publish-test/
 publish-test-latest/
+publish-exe/
+publish-installer/
 release/
+installer/
+
+## 本机开发/调试目录(截图、探针脚本、临时测试运行器,不入库)
+_testtmp/
+_uiharness/
+_icondiag/
+_localtestrunner/
+
+## 本机专用配置(含本机绝对路径,不入库)
+nuget.config
+debug.log
 
 ## 本地协作/调试状态
 .omx/

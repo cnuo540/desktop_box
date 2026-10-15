@@ -83,6 +83,17 @@ public static class Shell32
     [DllImport("shell32.dll")]
     public static extern bool SHChangeNotifyDeregister(uint ulID);
 
+    // ===== SHChangeNotify(主动广播,不是 Register)=====
+    // 出盒/落盘后通知 Explorer 桌面目录刷新,否则图标位置/新文件可能要等下次 F5 才出现。
+
+    public const uint SHCNF_PATHW = 0x0005;
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern void SHChangeNotify(uint wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern void SHChangeNotify(uint wEventId, uint uFlags, string? pszItem1, string? pszItem2);
+
     /// <summary>通知条目。pidl 为 IntPtr.Zero 表示"全局/所有"。</summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct SHChangeNotifyEntry
@@ -90,6 +101,52 @@ public static class Shell32
         public IntPtr pidl;
         [MarshalAs(UnmanagedType.Bool)]
         public bool fRecursive;
+    }
+
+    // ===== 移到回收站(SHFileOperation):explorer 的 Delete 就是这个 =====
+
+    public const uint FO_DELETE = 3;
+    /// <summary>进回收站(可还原)。没有它就是永久删除 —— 绝不能漏。</summary>
+    public const ushort FOF_ALLOWUNDO = 0x0040;
+    public const ushort FOF_NOCONFIRMATION = 0x0010;
+    public const ushort FOF_SILENT = 0x0004;
+    public const ushort FOF_NOERRORUI = 0x0400;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SHFILEOPSTRUCT
+    {
+        public IntPtr hwnd;
+        public uint wFunc;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pFrom;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? pTo;
+        public ushort fFlags;
+        [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted;
+        public IntPtr hNameMappings;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? lpszProgressTitle;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int SHFileOperationW(ref SHFILEOPSTRUCT lpFileOp);
+
+    /// <summary>把一批路径移到回收站(等同 explorer 里按 Delete)。返回是否成功。</summary>
+    public static bool MoveToRecycleBin(IEnumerable<string> paths, IntPtr owner)
+    {
+        var list = paths
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (list.Count == 0) return false;
+
+        // pFrom 要是"双 null 结尾"的路径串
+        var operation = new SHFILEOPSTRUCT
+        {
+            hwnd = owner,
+            wFunc = FO_DELETE,
+            pFrom = string.Join('\0', list) + "\0\0",
+            fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+        };
+
+        return SHFileOperationW(ref operation) == 0 && !operation.fAnyOperationsAborted;
     }
 
     /// <summary>解析通知携带的 PIDL 列表(NewDelivery 模式:WPARAM=数量,LPARAM=PIDL 数组指针)。

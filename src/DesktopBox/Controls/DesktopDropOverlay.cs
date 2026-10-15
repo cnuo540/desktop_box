@@ -40,6 +40,14 @@ public sealed class DesktopDropOverlay : IDisposable
     /// <summary>拖放落在桌面时的光标屏幕坐标(物理像素);未落在桌面时为 null。</summary>
     public (double X, double Y)? DropScreenPosition { get; private set; }
 
+    /// <summary>盒子"当前实际占据"的屏幕矩形。卷起的盒子只占标题栏那么高 —— 挖洞必须按这个来:
+    /// 用模型里存的完整高度挖洞的话,卷起后腾出来的那片空白仍然被当成盒子的一部分,拖到那里就漏给
+    /// explorer,它会当成"把文件复制到它自己所在的同一个文件夹",弹「源文件名和目标文件名相同」。</summary>
+    public static List<Rect> OccupiedBoxRects(IEnumerable<ViewModels.BoxViewModel> boxes)
+        => boxes.Where(b => b.Width > 0 && b.RenderHeight > 0)
+                .Select(b => new Rect(b.X, b.Y, b.Width, b.RenderHeight))
+                .ToList();
+
     public static DesktopDropOverlay? TryCreate(IEnumerable<Rect> excludedBounds)
     {
         // 与主窗口同策略（Native.User32.ResolveDesktopHost）：DefView 优先保证可见。
@@ -147,7 +155,7 @@ public sealed class DesktopDropOverlay : IDisposable
         }
     }
 
-    private static Rect GetVirtualDesktopBounds()
+    internal static Rect GetVirtualDesktopBounds()
     {
         try
         {
@@ -226,6 +234,8 @@ public sealed class DesktopDropOverlay : IDisposable
         if (data is null) return DragDropEffects.None;
         if (data.GetDataPresent(ItemDragDrop.DragSourceItemFormat)) return DragDropEffects.Copy;
         if (data.GetDataPresent(ItemDragDrop.DragSourceTabFormat)) return DragDropEffects.Move;
+        // 桌面层的小图标是带着 FileDrop 拖的:拖到桌面空白处 = 留在原地(别显示"禁止"光标)
+        if (data.GetDataPresent(DataFormats.FileDrop)) return DragDropEffects.Copy | DragDropEffects.Move;
         return DragDropEffects.None;
     }
 

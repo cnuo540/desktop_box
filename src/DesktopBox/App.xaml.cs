@@ -215,6 +215,7 @@ public partial class App : Application
         s.AddSingleton<IDesktopIconsService, DesktopIconsService>();
         s.AddSingleton<IDesktopIconPositions, Native.DesktopIconPositions>();
         s.AddSingleton<IDesktopIconLayoutService, DesktopIconLayoutService>();
+        s.AddSingleton<IDesktopWatcherService, DesktopWatcherService>();
         s.AddSingleton<IShellChangeNotifierService, ShellChangeNotifierService>();
         s.AddSingleton<IShellMenuRunner, ShellMenuProcessRunner>();
         s.AddSingleton<FirstLetterKeyboardNavigator>();

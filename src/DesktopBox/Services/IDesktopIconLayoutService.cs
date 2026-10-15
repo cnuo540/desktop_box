@@ -2,23 +2,24 @@ using System.Collections.Generic;
 
 namespace DesktopBox.Services;
 
-/// <summary>桌面图标"按项"显隐:把<b>已收纳</b>的桌面项图标挪到可视区外,需要时再挪回原位。
-/// 系统只有整层的"显示/隐藏桌面图标",没有按项开关;桌面整理类软件的做法就是挪图标位置 ——
-/// 纯视图数据,<b>不动任何文件</b>,而且未收纳/新建的项照常显示。</summary>
+/// <summary>桌面图标"按属性隐藏"的收尾服务 —— 现在只用于<b>迁移</b>。
+///
+/// 早期版本给已收纳的桌面项加 <c>Hidden</c> 属性、并关掉资源管理器的"显示隐藏项目";
+/// 现在改成"关掉 explorer 的桌面图标层 + 自绘桌面层"(见 DesktopLayerWindow)后,
+/// 那些痕迹都要还回去 —— 文件属性恢复原样、"显示隐藏项目"恢复成用户原来的值。
+///
+/// 系统图标(此电脑/回收站)的显隐仍走注册表,和桌面图标层不是一套机制,所以留在这里。</summary>
 public interface IDesktopIconLayoutService
 {
-    /// <summary>当前被挪走的项数(仅用于日志/诊断)。</summary>
-    int ParkedCount { get; }
-
-    /// <summary>把给定的桌面项挪出可视区(已经挪过的跳过、读不到原位置的跳过)。返回真正挪走的数量。</summary>
-    int Park(IEnumerable<string> paths);
-
-    /// <summary>把某一项挪回原位(它不再"已收纳"时用,例如从盒子里拖回桌面)。返回是否挪回。</summary>
-    bool Restore(string path);
-
-    /// <summary>把所有被挪走的项挪回原位。返回挪回的数量。</summary>
+    /// <summary>把所有"按属性隐藏"的项恢复原属性(并拉回旧版遗留在屏幕外的图标)。返回恢复的数量。</summary>
     int RestoreAll();
 
-    /// <summary>系统图标(此电脑/回收站/控制面板/网络)显隐 —— 这几个走注册表,和文件图标不是一套机制。</summary>
+    /// <summary>把某一项恢复原属性(它不再"已收纳"时用)。返回是否改动过。</summary>
+    bool Restore(string path);
+
+    /// <summary>还原资源管理器"显示隐藏项目"到用户原来的设置(从没改过则什么都不做)。</summary>
+    void SetExplorerShowHidden(bool show);
+
+    /// <summary>系统图标(此电脑/回收站/控制面板/网络)显隐 —— 这几个走注册表,和文件图标不是一套。</summary>
     void SetSystemIconsVisible(bool visible);
 }

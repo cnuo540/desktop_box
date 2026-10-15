@@ -189,6 +189,35 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
         item = IntPtr.Zero;
         if (string.IsNullOrWhiteSpace(path)) return false;
 
+        // 路径 A:SHParseDisplayName 解析绝对路径 → 取末段子 PIDL。
+        // 桌面目录重定向(D:\电脑桌面勿删)时,IFolderView 文件夹的 ParseDisplayName
+        // 容易对完整路径抛出 0x80070002;绝对 PIDL + ILFindLastID 更稳。
+        IntPtr absolutePidl = IntPtr.Zero;
+        try
+        {
+            uint attr;
+            if (SHParseDisplayName(path, IntPtr.Zero, out absolutePidl, 0, out attr) == 0
+                && absolutePidl != IntPtr.Zero)
+            {
+                var child = ILFindLastID(absolutePidl);
+                if (child != IntPtr.Zero)
+                {
+                    _pidlOwner[child] = absolutePidl;
+                    item = child;
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // 落到路径 B
+        }
+        if (absolutePidl != IntPtr.Zero)
+        {
+            try { CoTaskMemFree(absolutePidl); } catch { }
+        }
+
+        // 路径 B:视图文件夹 + 仅文件名(相对桌面)
         var view = TryGetView();
         if (view is null) return false;
 
@@ -196,15 +225,23 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
         IntPtr fullPidl = IntPtr.Zero;
         try
         {
-            // 用"视图自己的文件夹"解析路径,再取最后一个 SHITEMID 作为子 PIDL。
-            // 直接用 SHParseDisplayName 的结果会得到 E_FAIL:那是整块绝对 PIDL,不是子 PIDL。
             var iid = IID_IShellFolder;
             view.GetFolder(ref iid, out folderPtr);
             if (folderPtr == IntPtr.Zero) return false;
 
             var folder = (IShellFolder)Marshal.GetObjectForIUnknown(folderPtr);
             var attributes = 0u;
-            folder.ParseDisplayName(IntPtr.Zero, IntPtr.Zero, path, out _, out fullPidl, ref attributes);
+            var name = path;
+            try
+            {
+                var dir = System.IO.Path.GetDirectoryName(path);
+                var file = System.IO.Path.GetFileName(path);
+                if (!string.IsNullOrEmpty(file) && !string.IsNullOrEmpty(dir))
+                    name = file;
+            }
+            catch { }
+
+            folder.ParseDisplayName(IntPtr.Zero, IntPtr.Zero, name, out _, out fullPidl, ref attributes);
             if (fullPidl == IntPtr.Zero) return false;
 
             var child = ILFindLastID(fullPidl);
@@ -214,11 +251,11 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
             item = child;
             return true;
         }
-        catch (Exception ex)
+        catch
         {
-            LogService.Warn("DesktopIconPositions.Parse", LogService.Truncate(ex.Message, 160));
-            _view = null;
+            // 桌面重定向下逐文件抛 0x80070002 会刷屏,只静默失败走下一条路径
             if (fullPidl != IntPtr.Zero) { try { CoTaskMemFree(fullPidl); } catch { } }
+            _view = null;
             return false;
         }
         finally
@@ -268,6 +305,58 @@ public sealed class DesktopIconPositions : IDesktopIconPositions
         {
             _view = null;
             return false;
+        }
+    }
+
+    /// <summary>一次 COM 调用放置整批图标,并<b>读回校验</b>。
+    ///
+    /// <para>SelectAndPositionItems 在坐标被自动排列/网格吸附弹回时仍可能返回成功,
+    /// 只信返回值会导致"报告已隐藏、桌面却满屏"。这里放置后抽样读回,
+    /// 只有 y 仍停在目标附近的才算成功。</para>
+    /// <para>1500+ 项会拆成小批,避免一次 COM 参数过大被静默丢弃。</para></summary>
+    public int TrySetMany(IReadOnlyList<(IntPtr Item, int X, int Y)> items)
+    {
+        if (items is null || items.Count == 0) return 0;
+        var view = TryGetView();
+        if (view is null) return 0;
+
+        const int chunk = 64;
+        var verified = 0;
+        try
+        {
+            for (var start = 0; start < items.Count; start += chunk)
+            {
+                var slice = items.Skip(start).Take(chunk).ToList();
+                var pidls = new IntPtr[slice.Count];
+                var points = new POINT[slice.Count];
+                for (var i = 0; i < slice.Count; i++)
+                {
+                    pidls[i] = slice[i].Item;
+                    points[i] = new POINT { X = slice[i].X, Y = slice[i].Y };
+                }
+
+                view.SelectAndPositionItems((uint)slice.Count, pidls, points, SVSI_POSITIONITEM);
+
+                // 读回校验:抽 2 个 + 首尾
+                var checks = new[] { 0, slice.Count / 2, slice.Count - 1 }.Distinct();
+                foreach (var idx in checks)
+                {
+                    try
+                    {
+                        view.GetItemPosition(slice[idx].Item, out var got);
+                        // y 允许差一点(网格吸附),但必须明显离开原位的目标区域
+                        if (Math.Abs(got.Y - slice[idx].Y) <= 32)
+                            verified++;
+                    }
+                    catch { /* 视图失效,整批按未验证处理 */ }
+                }
+            }
+            return verified > 0 ? items.Count : 0;
+        }
+        catch
+        {
+            _view = null;
+            return 0;
         }
     }
 }

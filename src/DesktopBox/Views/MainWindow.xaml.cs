@@ -23,6 +23,9 @@ public partial class MainWindow : Window
     private readonly SettingsWindow _settings;
     private readonly ILocalizerService _localizer;
     private readonly Dictionary<Guid, BoxWindow> _boxWindows = new();
+    private DesktopLayerWindow? _layerWindow;
+    private Native.LowLevelKeyboardHook? _keyboardHook;
+    private IntPtr _layerHost;
     private IntPtr _desktopHost;
     private Forms.NotifyIcon? _tray;
     private Icon? _trayIcon;
@@ -46,9 +49,14 @@ public partial class MainWindow : Window
 
         _vm.ScreenWidth = SystemParametersHelper.LayoutWidth;
         _vm.Boxes.CollectionChanged += OnBoxesChanged;
+        _vm.LooseItemsChanged += OnLooseItemsChanged;
         _vm.PropertyChanged += OnViewModelPropertyChanged;
         _vm.PersistenceFailed += OnPersistenceFailed;
         _settingsVm.PersistenceFailed += OnPersistenceFailed;
+
+        // 鼠标钩子/键盘钩子都补"我们的窗口拿不到焦点"这件事:Delete 删除选中项靠键盘钩子
+        _keyboardHook = new Native.LowLevelKeyboardHook();
+        _keyboardHook.KeyDown += OnGlobalKeyDown;
 
         SetupTray();
         // WinForms 托盘菜单不像 WPF DynamicResource 会自动刷新,语言切换后需手动重建菜单文本
@@ -140,11 +148,19 @@ public partial class MainWindow : Window
         menu.Items.Add(_localizer["menu.newBox"], null, (_, _) => _vm.AddBoxCommand.Execute(null));
         menu.Items.Add(_localizer["menu.addSysIcons"], null, (_, _) => _vm.AddSystemIconsBoxCommand.Execute(null));
         menu.Items.Add(_localizer["menu.organize"], null, (_, _) => OrganizeAndShowBoxes());
+        // 盒子背景不透明度:菜单里嵌一个滑条(拖动即时生效,松手即存盘)
+        menu.Items.Add(new Forms.ToolStripMenuItem(_localizer["menu.boxOpacity"]) { Enabled = false });
+        menu.Items.Add(new Forms.ToolStripControlHost(BuildOpacitySlider()));
         menu.Items.Add(_localizer["menu.toggleIcons"], null, (_, _) => _vm.ToggleDesktopIconsCommand.Execute(null));
+        // explorer 自己那套"自动排列图标"在图标层关掉后是灰的(它按"看得到的图标"算),
+        // 所以桌面上散落项的重新排列由我们自己提供入口。
+        menu.Items.Add(_localizer["menu.arrangeIcons"], null, (_, _) => _layerWindow?.ResetPositions());
         menu.Items.Add(_localizer["menu.refreshItems"], null, (_, _) => RefreshMissingItemsFromTray());
         menu.Items.Add(_localizer["menu.settings"], null, (_, _) => OnOpenSettings(null, null));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(_localizer["menu.openLog"], null, (_, _) => Services.LogService.OpenLogDirectory());
+        // 制作人署名:灰色不可点,只是个信息行
+        menu.Items.Add(new Forms.ToolStripMenuItem(_localizer["menu.author"]) { Enabled = false });
         menu.Items.Add(_localizer["menu.quit"], null, (_, _) => OnQuit(null, null));
         _tray.ContextMenuStrip = menu;
         oldMenu?.Dispose();
@@ -156,7 +172,8 @@ public partial class MainWindow : Window
         RefreshDesktopLayer();
         if (_tray is null) return;
         var message = string.Format(_localizer["dialog.refreshItems.done"], removed);
-        _tray.ShowBalloonTip(4000, _localizer["app.name"], message, Forms.ToolTipIcon.Info);
+        // 和盒子里那一处保持一致:成功类提示走自动消失的提示条(不透明度 90%),不再用气泡/模态框
+        Views.ToastWindow.Show(message, opacity: 0.9);
     }
 
     private void ScheduleDesktopHostRetry()
@@ -336,6 +353,8 @@ public partial class MainWindow : Window
 
     private void SyncBoxWindows()
     {
+        EnsureLayerWindow(_desktopHost);
+
         var liveIds = _vm.Boxes.Select(b => b.Id).ToHashSet();
         int removed = 0;
         foreach (var (id, window) in _boxWindows.ToList())
@@ -411,6 +430,113 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    /// <summary>桌面层:只在"隐藏原生图标"时存在 —— 原生图标层开着时两边同时画会重影。</summary>
+    private void EnsureLayerWindow(IntPtr host)
+    {
+        if (_vm.DesktopIconsVisible || host == IntPtr.Zero)
+        {
+            DisposeLayerWindow();
+            return;
+        }
+
+        if (_layerWindow is not null && _layerHost == host && _layerWindow.IsHandleAlive)
+        {
+            _layerWindow.Update();
+            return;
+        }
+
+        DisposeLayerWindow();
+        try
+        {
+            var icons = App.Services.GetRequiredService<IIconExtractorService>();
+            _layerWindow = new DesktopLayerWindow(host, _vm, icons);
+            _layerHost = host;
+            Services.LogService.Info("DesktopHost.Ensure",
+                $"已建桌面层 host=0x{host:X} hwnd=0x{_layerWindow.Handle:X}");
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainWindow.EnsureLayerWindow");
+        }
+    }
+
+    /// <summary>托盘菜单里的「盒子透明度」滑条。WinForms 菜单没有滑条控件,用 ToolStripControlHost
+    /// 把一个 TrackBar 嵌进菜单项:菜单不关闭、拖动即时改所有盒子的背景透明度。</summary>
+    private Forms.TrackBar BuildOpacitySlider()
+    {
+        var slider = new Forms.TrackBar
+        {
+            Minimum = 10,
+            Maximum = 100,
+            TickFrequency = 10,
+            SmallChange = 5,
+            LargeChange = 10,
+            Value = (int)Math.Round(Math.Clamp(_vm.BoxOpacity, 0.1, 1.0) * 100),
+            Width = 190,
+            Height = 32,
+            AutoSize = false
+        };
+        slider.Scroll += (_, _) => _vm.BoxOpacity = slider.Value / 100.0;
+        return slider;
+    }
+
+    /// <summary>删掉光标所在盒子里选中的条目(移到回收站)。返回是否处理了。</summary>
+    private bool DeleteBoxSelectionAt(int screenX, int screenY)
+    {
+        foreach (var (_, window) in _boxWindows.ToList())
+        {
+            if (!window.IsHandleAlive) continue;
+            if (!Native.User32.GetWindowRect(window.Handle, out var rect)) continue;
+            if (screenX < rect.Left || screenX >= rect.Right || screenY < rect.Top || screenY >= rect.Bottom) continue;
+
+            var selected = window.Box.DisplayItems.Where(i => i.IsSelected).ToList();
+            if (selected.Count == 0) return false;
+
+            var removed = _vm.MoveToRecycleBin(selected.Select(i => i.TargetPath));
+            Services.LogService.Info("Box.Delete", $"Delete 键:光标在盒子 {Services.LogService.Truncate(window.Box.Header)} 上,删了 {removed} 项");
+            return removed > 0;
+        }
+
+        return false;
+    }
+
+    /// <summary>全局按键:我们的窗口是子窗口、拿不到键盘焦点,所以 Delete 只能从钩子进来。
+    /// 只认"光标正压在我们的界面(盒子/桌面图标/桌面空白)上"的情况,免得在别的程序里按 Delete 误删。</summary>
+    private void OnGlobalKeyDown(int virtualKey)
+    {
+        if (virtualKey != Native.LowLevelKeyboardHook.VK_DELETE) return;
+
+        try
+        {
+            var cursor = Forms.Cursor.Position;
+            if (DeleteBoxSelectionAt(cursor.X, cursor.Y)) return;
+            _layerWindow?.TryDeleteSelectionAt(cursor.X, cursor.Y);
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainWindow.OnGlobalKeyDown");
+        }
+    }
+
+    private void DisposeLayerWindow()
+    {
+        _layerWindow?.Dispose();
+        _layerWindow = null;
+        _layerHost = IntPtr.Zero;
+    }
+
+    /// <summary>"未收纳项"集合变了 → 桌面层重画(事件可能来自后台线程)。</summary>
+    private void OnLooseItemsChanged(object? sender, EventArgs e)
+    {
+        try
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher is null || dispatcher.HasShutdownStarted) return;
+            dispatcher.BeginInvoke(new Action(() => _layerWindow?.Update()));
+        }
+        catch { }
+    }
+
     private void EnsureBoxWindow(BoxViewModel box)
     {
         if (_boxWindows.TryGetValue(box.Id, out var existing))
@@ -481,6 +607,10 @@ public partial class MainWindow : Window
 
         _ownedResourcesDisposed = true;
         Interlocked.Exchange(ref _desktopHostRetry, null)?.Dispose();
+        DisposeLayerWindow();
+        _keyboardHook?.Dispose();
+        _keyboardHook = null;
+        try { _vm.LooseItemsChanged -= OnLooseItemsChanged; } catch { }
         // 移除 HwndSource hook：否则 explorer 的 shellNotify 会打到半析构窗口。
         try
         {

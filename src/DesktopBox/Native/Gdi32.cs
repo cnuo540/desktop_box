@@ -6,6 +6,7 @@ namespace DesktopBox.Native;
 public static class Gdi32
 {
     public const int RGN_DIFF = 4;
+    public const int RGN_OR = 2;
 
     [DllImport("gdi32.dll", SetLastError = true)]
     public static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);

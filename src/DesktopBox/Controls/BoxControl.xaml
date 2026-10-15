@@ -8,13 +8,10 @@
              DragOver="OnDragOver"
              LostMouseCapture="OnLostMouseCapture"
              MouseEnter="OnBoxMouseEnter"
-             MouseLeave="OnBoxMouseLeave"
-             ContextMenuOpening="OnContextMenuOpening">
+             MouseLeave="OnBoxMouseLeave">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolVis"/>
         <ctl:EnumEqualityToBoolConverter x:Key="ModeEqual"/>
-        <ctl:BoolToEyeStrokeConverter x:Key="BoolToEyeBrush"/>
-        <ctl:BoolToEyeFillConverter x:Key="BoolToEyeFill"/>
     </UserControl.Resources>
     <Border x:Name="Card"
             HorizontalAlignment="Stretch"
@@ -186,21 +183,21 @@
                                 </Path.Style>
                             </Path>
                         </Button>
-                        <!-- 显示/隐藏桌面图标快捷按钮:眼睛图标,显示=亮色实心,隐藏=暗色空心 -->
-                        <Button x:Name="ToggleIconsBtn"
-                                Click="OnToggleDesktopIcons"
-                                ToolTip="{DynamicResource tip.toggleIcons}"
+                        <!-- 设置按钮:点击打开与盒子右键完全相同的菜单 -->
+                        <Button x:Name="SettingsBtn"
+                                Click="OnOpenContextMenu"
+                                ToolTip="{DynamicResource menu.settings}"
                                 Width="24" Height="24" Margin="4,0,0,0" Padding="0"
                                 Background="Transparent"
                                 BorderBrush="#66FFFFFF"
-                                Cursor="Hand"
-                                Tag="{Binding MainVm.DesktopIconsVisible, RelativeSource={RelativeSource AncestorType=UserControl}}">
+                                Cursor="Hand">
                             <Path Width="16" Height="16" Stretch="Uniform"
                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                  StrokeThickness="1.6"
-                                  Stroke="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Tag, Converter={StaticResource BoolToEyeBrush}}"
-                                  Fill="{Binding RelativeSource={RelativeSource AncestorType=Button}, Path=Tag, Converter={StaticResource BoolToEyeFill}}"
-                                  Data="M12,5C5,5 1,12 1,12C1,12 5,19 12,19C19,19 23,12 23,12C23,12 19,5 12,5 Z M12,9A3,3 0 1,0 12,15A3,3 0 1,0 12,9 Z"/>
+                                  StrokeThickness="1.55"
+                                  Stroke="#F2FFFFFF"
+                                  Fill="Transparent"
+                                  StrokeLineJoin="Round"
+                                  Data="M12,2.5 L13.1,5.05 C13.55,5.18 13.98,5.36 14.38,5.59 L16.95,4.55 L19.45,7.05 L18.41,9.62 C18.64,10.02 18.82,10.45 18.95,10.9 L21.5,12 L18.95,13.1 C18.82,13.55 18.64,13.98 18.41,14.38 L19.45,16.95 L16.95,19.45 L14.38,18.41 C13.98,18.64 13.55,18.82 13.1,18.95 L12,21.5 L10.9,18.95 C10.45,18.82 10.02,18.64 9.62,18.41 L7.05,19.45 L4.55,16.95 L5.59,14.38 C5.36,13.98 5.18,13.55 5.05,13.1 L2.5,12 L5.05,10.9 C5.18,10.45 5.36,10.02 5.59,9.62 L4.55,7.05 L7.05,4.55 L9.62,5.59 C10.02,5.36 10.45,5.18 10.9,5.05 Z M12,9 A3,3 0 1,0 12,15 A3,3 0 1,0 12,9 Z"/>
                         </Button>
                     </StackPanel>
                 </Grid>
@@ -539,7 +536,7 @@
             <MenuItem Header="{DynamicResource box.menu.rename}" Click="OnRename"/>
             <MenuItem Header="{DynamicResource box.menu.removeSelected}" Click="OnRemoveSelected"/>
             <MenuItem Header="{DynamicResource box.menu.refreshItems}" Click="OnRefreshItems"/>
-            <MenuItem Header="{DynamicResource box.menu.clear}" Click="OnClear"/>
+            <MenuItem Header="{DynamicResource box.menu.clear}" Click="OnClear" Tag="structural"/>
             <Separator/>
             <!-- 仅标签模式 -->
             <MenuItem Header="{DynamicResource box.menu.newTab}" Click="OnAddTab">
@@ -592,7 +589,7 @@
                 </MenuItem.Style>
             </MenuItem>
             <!-- 仅标签模式 -->
-            <MenuItem Header="{DynamicResource box.menu.mergeIn}" Click="OnMergeIn">
+            <MenuItem Header="{DynamicResource box.menu.mergeIn}" Click="OnMergeIn" Tag="structural">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">
                         <Setter Property="Visibility" Value="Collapsed"/>
@@ -604,7 +601,7 @@
                     </Style>
                 </MenuItem.Style>
             </MenuItem>
-            <MenuItem Header="{DynamicResource box.menu.split}" Click="OnSplit">
+            <MenuItem Header="{DynamicResource box.menu.split}" Click="OnSplit" Tag="structural">
                 <MenuItem.Style>
                     <Style TargetType="MenuItem">
                         <Setter Property="Visibility" Value="Collapsed"/>
@@ -617,7 +614,7 @@
                 </MenuItem.Style>
             </MenuItem>
             <Separator/>
-            <MenuItem Header="{DynamicResource box.menu.delete}" Click="OnDelete"/>
+            <MenuItem Header="{DynamicResource box.menu.delete}" Click="OnDelete" Tag="structural"/>
         </ContextMenu>
     </UserControl.ContextMenu>
 </UserControl>

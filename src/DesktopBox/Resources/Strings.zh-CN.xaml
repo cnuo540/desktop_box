@@ -19,9 +19,12 @@
     <s:String x:Key="menu.addSysIcons">添加系统图标盒子</s:String>
     <s:String x:Key="menu.organize">一键整理桌面</s:String>
     <s:String x:Key="menu.toggleIcons">隐藏/显示桌面图标</s:String>
+    <s:String x:Key="menu.arrangeIcons">重新排列桌面图标</s:String>
+    <s:String x:Key="menu.boxOpacity">盒子透明度</s:String>
     <s:String x:Key="menu.refreshItems">刷新失效图标</s:String>
     <s:String x:Key="menu.settings">设置</s:String>
     <s:String x:Key="menu.openLog">打开日志目录</s:String>
+    <s:String x:Key="menu.author">制作人：QQ 790544312</s:String>
     <s:String x:Key="menu.quit">退出</s:String>
     <s:String x:Key="menu.view">查看</s:String>
 
@@ -34,6 +37,10 @@
 
     <!-- 盒子右键菜单 -->
     <s:String x:Key="box.menu.rename">重命名盒子</s:String>
+    <s:String x:Key="menu.renameItem">重命名</s:String>
+    <s:String x:Key="menu.openItem">打开</s:String>
+    <s:String x:Key="dialog.renameItem.exists">这个名字已经存在：{0}</s:String>
+    <s:String x:Key="dialog.renameItem.invalid">名称里有不能用的字符。</s:String>
     <s:String x:Key="box.menu.removeSelected">从盒子移除选中项</s:String>
     <s:String x:Key="box.menu.refreshItems">刷新失效图标</s:String>
     <s:String x:Key="box.menu.clear">清空盒子</s:String>
@@ -51,7 +58,7 @@
     <s:String x:Key="box.menu.delete">删除盒子</s:String>
 
     <!-- tooltip -->
-    <s:String x:Key="tip.toggleIcons">显示/隐藏桌面图标(整层开关,不移动任何文件)</s:String>
+    <s:String x:Key="tip.toggleIcons">隐藏桌面上的原生图标(不动任何文件);没进盒子的项由桌面层自己画</s:String>
     <s:String x:Key="tip.newTab">新建标签</s:String>
     <s:String x:Key="tip.rollUp">卷起盒子(鼠标悬停时自动展开)</s:String>
     <s:String x:Key="tip.expandBox">展开盒子</s:String>
@@ -122,7 +129,7 @@
     <s:String x:Key="dialog.organize.empty.done">没有新的桌面文件需要整理,已全部归类。</s:String>
     <s:String x:Key="dialog.organize.done">已整理 {0} 个新文件到「桌面整理」盒子{1}。&#x0a;(文件未移动,图标稍候加载。)</s:String>
     <s:String x:Key="dialog.organize.sysIconsTag">(并添加系统图标)</s:String>
-    <s:String x:Key="dialog.organize.hidIcons">&#x0a;&#x0a;为避免桌面图标与盒子里的重复显示,已自动隐藏桌面图标。&#x0a;注意:这是系统整层开关,隐藏后桌面上新建的文件夹、从盒子里拖出来的文件也看不见(文件没丢)。&#x0a;需要显示时:点托盘菜单的「隐藏/显示桌面图标」,或盒子标题栏右侧的眼睛图标。</s:String>
+    <s:String x:Key="dialog.organize.hidIcons">&#x0a;&#x0a;已把桌面图标隐藏起来(文件没被动过,只是不画在桌面上)。&#x0a;不想看桌面图标时:点托盘菜单的「隐藏/显示桌面图标」。</s:String>
 
     <!-- 分类(一键整理生成的标签名)-->
     <s:String x:Key="cat.apps">应用程序</s:String>

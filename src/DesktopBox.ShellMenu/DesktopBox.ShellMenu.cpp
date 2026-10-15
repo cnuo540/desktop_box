@@ -13,6 +13,26 @@
 #define DBX_ID_REMOVE 0x7000
 #define DBX_RESULT_FAILED 0x7001
 #define DBX_RESULT_TARGET_DELETED 0x7002
+// 菜单项 id 同时用作退出码:选它就返回它。都在 CMD_LAST 之上,不会和 shell 的命令撞。
+#define DBX_ID_RENAME 0x7003
+
+// 调用方追加的额外菜单项(第 4 个参数,逗号分隔;缺省=只加"从盒子移除",兼容旧调用)。
+struct MenuOptions {
+    bool removeFromBox = false;
+    bool rename = false;
+};
+
+static MenuOptions ParseMenuOptions(const wchar_t* flags) {
+    MenuOptions options;
+    if (!flags) {                 // 没传:保持老行为(盒子里条目用)
+        options.removeFromBox = true;
+        return options;
+    }
+    const std::wstring text = flags;
+    options.removeFromBox = text.find(L"remove") != std::wstring::npos;
+    options.rename = text.find(L"rename") != std::wstring::npos;
+    return options;
+}
 
 // Unicode build still sees CFSTR_PREFERREDDROPEFFECT as a narrow SDK macro here.
 static const wchar_t* kPreferredDropEffectFormat = L"Preferred DropEffect";
@@ -155,7 +175,7 @@ static HWND CreateHookWindow() {
                            nullptr, nullptr, wc.hInstance, nullptr);
 }
 
-static int ShowShellMenu(const wchar_t* path, int screenX, int screenY) {
+static int ShowShellMenu(const wchar_t* path, int screenX, int screenY, const MenuOptions& options) {
     if (!path || !*path) { DbgLog("null/empty path"); return DBX_RESULT_FAILED; }
     // Record the helper argument for optional native diagnostics.
     char pathBuf[160] = {};
@@ -200,9 +220,15 @@ static int ShowShellMenu(const wchar_t* path, int screenX, int screenY) {
     DbgLog("QueryContextMenu", hr);
     if (FAILED(hr)) goto cleanup;
 
-    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    // "从盒子移除"(UTF-16 码点:从=4ECE 盒=76D2 子=5B50 移=79FB 除=9664)
-    AppendMenuW(hMenu, MF_STRING, DBX_ID_REMOVE, L"\x4ECE\x76D2\x5B50\x79FB\x9664");
+    if (options.removeFromBox || options.rename) {
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        // "重命名"(重=91CD 命=547D 名=540D)
+        if (options.rename)
+            AppendMenuW(hMenu, MF_STRING, DBX_ID_RENAME, L"\x91CD\x547D\x540D");
+        // "从盒子移除"(从=4ECE 盒=76D2 子=5B50 移=79FB 除=9664)
+        if (options.removeFromBox)
+            AppendMenuW(hMenu, MF_STRING, DBX_ID_REMOVE, L"\x4ECE\x76D2\x5B50\x79FB\x9664");
+    }
 
     hwndMenu = CreateHookWindow();
     if (!hwndMenu) { DbgLog("CreateHookWindow-FAIL"); goto cleanup; }
@@ -216,6 +242,8 @@ static int ShowShellMenu(const wchar_t* path, int screenX, int screenY) {
         result = 0;
     } else if (cmd == DBX_ID_REMOVE) {
         result = DBX_ID_REMOVE;
+    } else if (cmd == DBX_ID_RENAME) {
+        result = DBX_ID_RENAME;      // 交给宿主去问新名字并改真实文件名
     } else if (cmd >= DBX_CMD_FIRST && cmd <= DBX_CMD_LAST) {
         const UINT idCmd = cmd - DBX_CMD_FIRST;
         const std::wstring verb = GetCommandVerb(cm, idCmd);
@@ -269,7 +297,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv || argc != 4) {
+    if (!argv || (argc != 4 && argc != 5)) {
         if (argv) LocalFree(argv);
         return 1;
     }
@@ -283,7 +311,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         return 1;
     }
 
-    const int result = ShowShellMenu(argv[1], static_cast<int>(screenX), static_cast<int>(screenY));
+    const int result = ShowShellMenu(argv[1], static_cast<int>(screenX), static_cast<int>(screenY),
+                                     ParseMenuOptions(argc >= 5 ? argv[4] : nullptr));
     LocalFree(argv);
     return result;
 }

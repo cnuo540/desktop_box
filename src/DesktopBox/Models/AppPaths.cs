@@ -20,6 +20,9 @@ public static class AppPaths
     /// <summary>被"挪走隐藏"的桌面图标原位置(icon-layout.json)。落盘是为了崩溃/重启后还能还原图标布局。</summary>
     public static string IconLayoutPath => Path.Combine(DataDir, "icon-layout.json");
 
+    /// <summary>桌面层里"未收纳项"被拖到哪儿了(desktop-layer.json)。落盘后重启依然保持用户摆的位置。</summary>
+    public static string DesktopLayerPath => Path.Combine(DataDir, "desktop-layer.json");
+
     /// <summary>图标缓存目录(可重建)。</summary>
     public static string IconCacheDir => Path.Combine(DataDir, "icons");
 

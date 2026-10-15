@@ -30,6 +30,17 @@ public class ItemDragDropTests
     }
 
     [Fact]
+    public void CreateDesktopDropData_DoesNotExposeNativeFileDropPayload()
+    {
+        var item = Item(ItemType.File, @"D:\电脑桌面勿删\a.xlsx");
+        var data = ItemDragDrop.CreateDesktopDropData(item);
+
+        data.GetDataPresent(DataFormats.FileDrop).Should().BeFalse();
+        data.GetData(ItemDragDrop.DragSourceItemFormat).Should().Be(item.Id);
+        data.GetData(DataFormats.UnicodeText).Should().Be(item.TargetPath);
+    }
+
+    [Fact]
     public void CreateFileDropData_UsesNativeFileDropPayload()
     {
         var item = Item(ItemType.File, @"C:\Temp\a.txt");

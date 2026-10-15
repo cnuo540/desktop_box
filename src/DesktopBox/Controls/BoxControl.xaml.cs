@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using DesktopBox.Models;
 using DesktopBox.Services;
@@ -35,6 +36,23 @@ public partial class BoxControl : UserControl
     private FirstLetterKeyboardNavigator KeyboardNavigator =>
         _keyboardNavigator ??= App.Services.GetRequiredService<FirstLetterKeyboardNavigator>();
 
+    // ---- 框选(按住左键在条目区拉个框,松手选中框里的条目;explorer 的多选就是这套)----
+    private Canvas? _marqueeLayer;
+    private Border? _marqueeBox;
+    private Point _marqueeOrigin;
+    private bool _marqueeDragging;
+    /// <summary>拉框开始前的选中快照:按住 Ctrl 拉框 = 加选。</summary>
+    private readonly HashSet<Guid> _selectionBeforeMarquee = new();
+    private static readonly Brush MarqueeFill = Frozen(Color.FromArgb(0x33, 0x99, 0xCC, 0xFF));
+    private static readonly Brush MarqueeStroke = Frozen(Color.FromArgb(0x99, 0x99, 0xCC, 0xFF));
+
+    private static Brush Frozen(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
     public BoxControl()
     {
         InitializeComponent();
@@ -43,7 +61,21 @@ public partial class BoxControl : UserControl
         {
             try { WpfUiAnimationGuard.UnfreezeSubtree(this); } catch { }
             UpdateCollapsedHeight();   // 标题栏实测高度(DPI/字号自适应)回填给 VM
+            // 整盒子都能接住拖进来的文件:AllowDrop 不继承,必须把子树逐个打开,
+            // 否则只有盒子自己的空白处能落,拖到图标或条目区会被拒。
+            DropTargets.EnableOnSubtree(this);
+            ApplyBoxOpacity();
+            if (!_opacitySubscribed)
+            {
+                _opacitySubscribed = true;
+                try { MainVm.PropertyChanged += OnMainVmPropertyChanged; } catch { }
+            }
         };
+        // 拉框期间鼠标被本控件捕获,移动/抬手都回到这里
+        MouseMove += OnMarqueeMouseMove;
+        MouseLeftButtonUp += OnMarqueeMouseUp;
+        // 右键打开盒子菜单前,先把菜单锚点摆成"跟鼠标"
+        PreviewMouseRightButtonUp += OnRightButtonUpForMenu;
         // 标题栏高度会随 DPI 缩放/系统字号/语言字体变化:持续跟随,保证卷起时刚好只剩标题栏。
         HeaderBar.SizeChanged += (_, _) => UpdateCollapsedHeight();
         Unloaded += (_, _) => StopHoverTimer();
@@ -443,9 +475,10 @@ public partial class BoxControl : UserControl
     // ---- 拖放导入(归当前标签 / Items)----
     private void OnDragOver(object sender, DragEventArgs e)
     {
+        // 盒内条目拖拽:落回本盒子 = 换个位置(重排);别的盒子仍不接受(免得误吞)
         if (e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat))
         {
-            e.Effects = DragDropEffects.None;
+            e.Effects = CanReorderFrom(e.Data) ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
             return;
         }
@@ -469,7 +502,7 @@ public partial class BoxControl : UserControl
         if (Vm is null || MainVm is null) return;
         if (e.Data.GetDataPresent(ItemDragDrop.DragSourceItemFormat))
         {
-            e.Effects = DragDropEffects.None;
+            e.Effects = TryReorderItem(e) ? DragDropEffects.Move : DragDropEffects.None;
             e.Handled = true;
             return;
         }
@@ -524,7 +557,133 @@ public partial class BoxControl : UserControl
         e.Handled = true;
     }
 
-    private void OnContextMenuOpening(object sender, ContextMenuEventArgs e) { /* 预留 */ }
+    /// <summary>盒子右键菜单的两种形态:齿轮按钮打开的是完整菜单,其余(空白处/标题栏右键)是精简版。</summary>
+    private enum BoxMenuMode
+    {
+        Compact,
+        Full
+    }
+
+    /// <summary>XAML 里给"结构性操作"打的标记(合并/拆分/删除盒子/清空盒子)。</summary>
+    private const string StructuralTag = "structural";
+
+    /// <summary>按打开方式来显隐结构性操作。
+    /// **必须在菜单打开之前就调用** —— 不能等 ContextMenuOpening:齿轮按钮是程序化打开,
+    /// 那个事件不一定触发,结果就是"上次右键把这几项折叠过,齿轮里就再也看不到了"(实测踩到)。</summary>
+    private void ApplyMenuMode(BoxMenuMode mode)
+    {
+        if (ContextMenu is null) return;
+
+        var showStructural = mode == BoxMenuMode.Full;
+        foreach (var item in ContextMenu.Items.OfType<MenuItem>())
+            if (Equals(item.Tag, StructuralTag))
+                item.Visibility = showStructural ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>右键按下时:把菜单锚点摆成"跟鼠标",并按精简版显隐。</summary>
+    private void OnRightButtonUpForMenu(object sender, MouseButtonEventArgs e)
+    {
+        ApplyMenuMode(BoxMenuMode.Compact);
+        if (ContextMenu is null) return;
+
+        ContextMenu.Placement = PlacementMode.MousePoint;
+        ContextMenu.HorizontalOffset = 0;
+        ContextMenu.VerticalOffset = 0;
+    }
+
+    /// <summary>盒子背景的基准色(XAML 里 Card 的 #99000000)。滑条按比例缩它的 A 通道 ——
+    /// 只改背景,图标和文字保持清晰。</summary>
+    private static readonly Color BaseCardColor = Color.FromArgb(0x99, 0, 0, 0);
+
+    private bool _opacitySubscribed;
+
+    /// <summary>按全局设置刷新盒子背景不透明度。</summary>
+    private void ApplyBoxOpacity()
+    {
+        try
+        {
+            var factor = Math.Clamp(MainVm.BoxOpacity, 0.1, 1.0);
+            var alpha = (byte)Math.Round(BaseCardColor.A * factor);
+            var brush = new SolidColorBrush(Color.FromArgb(alpha, BaseCardColor.R, BaseCardColor.G, BaseCardColor.B));
+            brush.Freeze();
+            Card.Background = brush;
+        }
+        catch
+        {
+            // 单测里没有 DI 容器 —— 背景保持原样即可
+        }
+    }
+
+    private void OnMainVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.BoxOpacity)) ApplyBoxOpacity();
+    }
+
+    /// <summary>菜单要开了:按"从哪儿打开"决定要不要露出结构性操作,然后复位成默认的精简版。</summary>
+    /// <summary>这次拖拽的是不是"本盒子当前标签里的条目"(是 → 允许落下并重排)。</summary>
+    private bool CanReorderFrom(IDataObject data)
+    {
+        if (Vm is null || MainVm is null) return false;
+        return ResolveDraggedItems(data).Count > 0;
+    }
+
+    /// <summary>把拖拽载荷里的 id 解析成真实条目(只保留还存在的)。多选拖拽会是一组。</summary>
+    private List<BoxItem> ResolveDraggedItems(IDataObject? data)
+    {
+        var result = new List<BoxItem>();
+        if (MainVm is null) return result;
+
+        foreach (var id in ItemDragDrop.ReadDraggedIds(data))
+        {
+            var item = MainVm.FindItemById(id);
+            if (item is not null) result.Add(item);
+        }
+
+        return result;
+    }
+
+    /// <summary>把拖动的条目挪到落点对应位置:同一盒子内 = 整组重排;别的盒子 = 整组挪进来。
+    /// 返回是否真的动了。</summary>
+    private bool TryReorderItem(DragEventArgs e)
+    {
+        if (Vm is null || MainVm is null) return false;
+
+        var items = ResolveDraggedItems(e.Data);
+        if (items.Count == 0) return false;
+
+        var index = DropInsertIndex(e, Vm.DisplayItems);
+        var fromThisBox = items.Where(i => Vm.DisplayItems.Contains(i)).ToList();
+        var fromOtherBoxes = items.Where(i => !Vm.DisplayItems.Contains(i)).ToList();
+
+        var moved = false;
+        if (fromThisBox.Count > 0) moved |= MainVm.MoveItemsToIndex(fromThisBox, index);
+        if (fromOtherBoxes.Count > 0) moved |= MainVm.MoveItemsToBox(fromOtherBoxes, Vm, index) > 0;
+
+        Services.LogService.Info("Box.Reorder.Try",
+            $"insert={index} sameBox={fromThisBox.Count} otherBox={fromOtherBoxes.Count} moved={moved}");
+        return moved;
+    }
+
+    /// <summary>落点对应的插入位置:压在哪块磁贴上就插到它前面/后面;落在空白处排到最后。
+    /// 大图标/平铺是横向排的,所以看落点在磁贴的左半还是右半。</summary>
+    private int DropInsertIndex(DragEventArgs e, System.Collections.Generic.IList<BoxItem> items)
+    {
+        var point = e.GetPosition(this);
+        foreach (var tile in FindVisualChildren<ItemTile>(this))
+        {
+            if (tile.Item is null) continue;
+
+            var topLeft = tile.TranslatePoint(new Point(0, 0), this);
+            var bounds = new Rect(topLeft.X, topLeft.Y, tile.ActualWidth, tile.ActualHeight);
+            if (!bounds.Contains(point)) continue;
+
+            var index = items.IndexOf(tile.Item);
+            if (index < 0) continue;
+            return point.X > bounds.Left + bounds.Width / 2 ? index + 1 : index;
+        }
+
+        return items.Count;
+    }
 
     /// <summary>点击条目列表的空白区域(非磁贴)→ 清除所有选中(资源管理器行为)。
     /// Preview 隧道事件:点磁贴时也会触发,需排除命中 ItemTile 的情况,否则 Ctrl 多选会被先清空。</summary>
@@ -532,7 +691,102 @@ public partial class BoxControl : UserControl
     {
         // 命中测试:若点中的是 ItemTile(或其子元素),不处理,交给磁贴自己的选中逻辑
         if (e.OriginalSource is DependencyObject d && FindAncestor<ItemTile>(d) is not null) return;
-        MainVm.ClearSelection();
+
+        // 空白处按下 = 开始拉框(没拖动就等价于"点空白取消选中")
+        StartMarquee(e.GetPosition(ItemsViewport), Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+    }
+
+    /// <summary>开始拉框。<paramref name="additive"/>=按住 Ctrl → 保留已有选中(加选)。</summary>
+    private void StartMarquee(Point origin, bool additive)
+    {
+        if (_marqueeDragging || Vm is null || MainVm is null) return;
+
+        _marqueeOrigin = origin;
+        _marqueeDragging = true;
+        _selectionBeforeMarquee.Clear();
+        Services.LogService.Info("Box.Marquee.Start", $"additive={additive}");
+
+        if (additive)
+        {
+            foreach (var item in Vm.DisplayItems)
+                if (item.IsSelected) _selectionBeforeMarquee.Add(item.Id);
+        }
+        else
+        {
+            MainVm.ClearSelection();
+        }
+
+        CaptureMouse();
+    }
+
+    private void OnMarqueeMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_marqueeDragging) return;
+
+        var rect = new Rect(_marqueeOrigin, e.GetPosition(ItemsViewport));
+        DrawMarquee(rect);
+
+        foreach (var tile in FindVisualChildren<ItemTile>(ItemsViewport))
+        {
+            if (tile.Item is null) continue;
+
+            var topLeft = tile.TranslatePoint(new Point(0, 0), ItemsViewport);
+            var bounds = new Rect(topLeft.X, topLeft.Y, tile.ActualWidth, tile.ActualHeight);
+            var hit = bounds.IntersectsWith(rect);
+            tile.Item.IsSelected = hit || _selectionBeforeMarquee.Contains(tile.Item.Id);
+        }
+    }
+
+    private void OnMarqueeMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_marqueeDragging) return;
+        _marqueeDragging = false;
+
+        RemoveMarquee();
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        MainVm?.ScheduleSave();
+        Services.LogService.Info("Box.Marquee.End",
+            $"选中 {Vm?.DisplayItems.Count(i => i.IsSelected) ?? 0} 项");
+    }
+
+    private void DrawMarquee(Rect rect)
+    {
+        if (_marqueeBox is null)
+        {
+            var layer = EnsureMarqueeLayer();
+            if (layer is null) return;
+
+            _marqueeBox = new Border
+            {
+                Background = MarqueeFill,
+                BorderBrush = MarqueeStroke,
+                BorderThickness = new Thickness(1),
+                IsHitTestVisible = false
+            };
+            layer.Children.Add(_marqueeBox);
+        }
+
+        Canvas.SetLeft(_marqueeBox, rect.Left);
+        Canvas.SetTop(_marqueeBox, rect.Top);
+        _marqueeBox.Width = Math.Max(0, rect.Width);
+        _marqueeBox.Height = Math.Max(0, rect.Height);
+    }
+
+    private Canvas? EnsureMarqueeLayer()
+    {
+        if (_marqueeLayer is not null) return _marqueeLayer;
+        if (ItemsViewport is null) return null;
+
+        _marqueeLayer = new Canvas { IsHitTestVisible = false };
+        ItemsViewport.Children.Add(_marqueeLayer);
+        return _marqueeLayer;
+    }
+
+    private void RemoveMarquee()
+    {
+        if (_marqueeBox is null) return;
+        _marqueeLayer?.Children.Remove(_marqueeBox);
+        _marqueeBox = null;
     }
 
     private static T? FindAncestor<T>(DependencyObject d) where T : DependencyObject
@@ -588,7 +842,8 @@ public partial class BoxControl : UserControl
     private void OnRefreshItems(object sender, RoutedEventArgs e)
     {
         var removed = MainVm.PruneMissingItems();
-        InputDialog.Inform(string.Format(Localizer["dialog.refreshItems.done"], removed));
+        // 成功类提示 → 2 秒自动消失的提示条(用户指定这条不透明度 90%)
+        ToastWindow.Show(string.Format(Localizer["dialog.refreshItems.done"], removed), opacity: 0.9);
     }
 
     private void OnDelete(object sender, RoutedEventArgs e)
@@ -665,9 +920,19 @@ public partial class BoxControl : UserControl
     private void OnSplit(object sender, RoutedEventArgs e)
         => MainVm.SplitBoxCommand.Execute(Vm);
 
-    // ---- 显示/隐藏桌面图标(标题栏快捷按钮,复用全局命令)----
-    private void OnToggleDesktopIcons(object sender, RoutedEventArgs e)
-        => MainVm.ToggleDesktopIconsCommand.Execute(null);
+    // ---- 设置按钮:复用盒子右键菜单,保证两处选项始终完全一致 ----
+    // ---- 设置按钮:复用盒子右键菜单(菜单本身只有一份,靠"从哪儿打开"决定要不要显示结构性操作)----
+    private void OnOpenContextMenu(object sender, RoutedEventArgs e)
+    {
+        if (ContextMenu is null) return;
+        // 齿轮按钮 = 设置入口 → 完整菜单(含合并/拆分/删除盒子/清空盒子)
+        ApplyMenuMode(BoxMenuMode.Full);
+        ContextMenu.PlacementTarget = sender as UIElement ?? this;
+        ContextMenu.Placement = PlacementMode.Bottom;
+        ContextMenu.HorizontalOffset = 0;
+        ContextMenu.IsOpen = true;
+        e.Handled = true;
+    }
 
     // ---- 视图模式切换(全局:所有盒子/标签共享)----
     private void OnViewLarge(object sender, RoutedEventArgs e) => SetView(ViewMode.Large);
@@ -709,9 +974,7 @@ public partial class BoxControl : UserControl
         payload.SetData(typeof(BoxTab), tab);
         payload.SetData(ItemDragDrop.DragSourceTabFormat, tab.Id);
 
-        var boxBounds = MainVm.Boxes
-            .Select(b => new Rect(b.X, b.Y, b.Width, b.Height))
-            .ToList();
+        var boxBounds = DesktopDropOverlay.OccupiedBoxRects(MainVm.Boxes);
 
         using var desktopDrop = DesktopDropOverlay.TryCreate(boxBounds);
         try

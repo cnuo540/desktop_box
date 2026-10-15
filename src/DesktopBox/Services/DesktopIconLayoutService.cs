@@ -8,20 +8,22 @@ using Microsoft.Win32;
 
 namespace DesktopBox.Services;
 
-/// <summary>桌面图标"按项"显隐实现(见 IDesktopIconLayoutService)。
+/// <summary>桌面图标"按属性隐藏"的收尾实现(见 IDesktopIconLayoutService)。
 ///
-/// 隐藏 = 把该项的图标位置挪到桌面视图下方远处(桌面视图不滚动,挪出可视区就等于看不见);
-/// 显示 = 挪回记录下来的原位置。原位置会落盘到 icon-layout.json —— 程序崩溃/重启后依然能还原,
-/// 不会把用户的图标布局弄丢。</summary>
+/// 历史:曾经用"给已收纳项加 Hidden 属性 + 关掉资源管理器的『显示隐藏项目』"来藏图标。
+/// 实测两个硬伤:①那个全局开关被 explorer 缓存在内存里,外部改注册表它不理会,
+/// 用户从界面把开关打开后几百个图标会一起涌回桌面;②它把文件夹窗口也一起影响了
+/// (用户要的是"目录里全看得见、桌面上不显示")。
+/// 现在改成关掉 explorer 的桌面图标层 + 自绘桌面层,这里只负责把当年的痕迹擦干净。</summary>
 public class DesktopIconLayoutService : IDesktopIconLayoutService
 {
-    /// <summary>停靠位置:虚拟桌面下方这么远处(视图坐标原点=虚拟桌面左上角,所以必然不可见)。</summary>
-    private const int ParkGapY = 4000;
-
-    /// <summary>停靠区里每个图标横向间隔,避免叠在一起(也便于读回校验)。</summary>
-    private const int ParkGapX = 80;
+    /// <summary>旧版"挪到屏幕外"的位置偏移:超过它就认定是历史遗留的停靠图标,启动时拉回来。</summary>
+    private const int LegacyParkGapY = 4000;
 
     private const string HideDesktopIconsKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons";
+    private const string ExplorerAdvancedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    /// <summary>资源管理器"显示隐藏项目"的开关名。<c>1</c>=显示,<c>2</c>=不显示。</summary>
+    private const string ShowHiddenValueName = "Hidden";
 
     private static readonly string[] SystemIconClsids = SystemIcons.Definitions
         .Select(d => d.Clsid.StartsWith("::", StringComparison.Ordinal) ? d.Clsid[2..] : d.Clsid)
@@ -29,8 +31,13 @@ public class DesktopIconLayoutService : IDesktopIconLayoutService
 
     private readonly IDesktopIconPositions _positions;
     private readonly string _storePath;
-    private readonly Dictionary<string, (int X, int Y)> _parked = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, FileAttributes> _hiddenAttributes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _priorSystemIcons = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>旧版遗留的"挪到屏幕外"记录:迁移时按这些路径把图标拉回可视区。</summary>
+    private readonly List<string> _legacyParked = new();
+
+    /// <summary>"显示隐藏项目"的原始值(当年改动前记下的,迁移时还原)。</summary>
+    private int? _priorShowHidden;
 
     public DesktopIconLayoutService(IDesktopIconPositions positions, string? storePath = null)
     {
@@ -39,74 +46,64 @@ public class DesktopIconLayoutService : IDesktopIconLayoutService
         Load();
     }
 
-    public int ParkedCount => _parked.Count;
-
-    public int Park(IEnumerable<string> paths)
-    {
-        if (paths is null) return 0;
-
-        var parkY = ParkY();
-        var moved = 0;
-        foreach (var path in paths.Where(IsDesktopItem).Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            if (_parked.ContainsKey(path)) continue;          // 已经挪走了
-            if (!_positions.TryParse(path, out var item)) continue;   // 不在桌面上/解析不了 → 不管它
-
-            try
-            {
-                // 先读原位置:读不到就绝不挪 —— 宁可"没隐藏",也不能挪了回不来
-                if (!_positions.TryGet(item, out var x, out var y)) continue;
-                if (y >= parkY) continue;                      // 已经在停靠区
-
-                if (!_positions.TrySet(item, moved * ParkGapX, parkY)) continue;
-                _parked[path] = (x, y);
-                moved++;
-            }
-            finally
-            {
-                _positions.Free(item);
-            }
-        }
-
-        if (moved > 0) Save();
-        LogService.Info("DesktopIconLayout.Park", $"moved={moved} parked={_parked.Count}");
-        return moved;
-    }
-
     public bool Restore(string path)
     {
-        if (string.IsNullOrWhiteSpace(path) || !_parked.TryGetValue(path, out var origin)) return false;
-        if (!_positions.TryParse(path, out var item)) return false;
+        if (string.IsNullOrWhiteSpace(path)) return false;
 
-        try
-        {
-            if (!_positions.TrySet(item, origin.X, origin.Y))
-                return false;   // 保留记录,下次再试
-            _parked.Remove(path);
-            Save();
-            return true;
-        }
-        finally
-        {
-            _positions.Free(item);
-        }
+        var restored = RestoreAttributes(path);
+        var repaired = RepairLegacyParkedIcon(path);
+        if (restored || repaired) Save();
+        return restored || repaired;
     }
 
     public int RestoreAll()
     {
-        var restored = 0;
-        foreach (var path in _parked.Keys.ToList())
-        {
-            if (Restore(path)) restored++;
-        }
+        var paths = _hiddenAttributes.Keys
+            .Concat(_legacyParked)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
-        LogService.Info("DesktopIconLayout.RestoreAll", $"restored={restored} left={_parked.Count}");
+        var restored = paths.Count(Restore);
+        _legacyParked.Clear();
+        LogService.Info("DesktopIconLayout.RestoreAll", $"restored={restored}/{paths.Count} left={_hiddenAttributes.Count}");
         return restored;
+    }
+
+    /// <summary>还原资源管理器"显示隐藏项目"。第一次改动前记住原值,<paramref name="show"/>=true 时还原。</summary>
+    public void SetExplorerShowHidden(bool show)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(ExplorerAdvancedKey);
+            if (key is null) return;
+
+            if (show)
+            {
+                if (_priorShowHidden is int prior)
+                {
+                    key.SetValue(ShowHiddenValueName, prior, RegistryValueKind.DWord);
+                    _priorShowHidden = null;
+                    Save();
+                    LogService.Info("DesktopIconLayout.ShowHidden", $"restored={prior}");
+                }
+                return;
+            }
+
+            if (_priorShowHidden is null)
+                _priorShowHidden = key.GetValue(ShowHiddenValueName) is int current ? current : 1;
+            // 2 = 不显示隐藏项目
+            key.SetValue(ShowHiddenValueName, 2, RegistryValueKind.DWord);
+            Save();
+        }
+        catch (Exception ex)
+        {
+            LogService.Warn("DesktopIconLayout.ShowHidden", LogService.Truncate(ex.Message, 160));
+        }
     }
 
     public void SetSystemIconsVisible(bool visible)
     {
-        // 这 4 个系统图标走注册表(HideDesktopIcons),与文件图标那套"挪位置"无关。
+        // 这 4 个系统图标走注册表(HideDesktopIcons),与桌面图标层无关。
         // 隐藏前先记住原值,显示时还原成用户原来的设置。
         try
         {
@@ -170,11 +167,56 @@ public class DesktopIconLayoutService : IDesktopIconLayoutService
     {
         try
         {
-            return (int)Math.Ceiling(SystemParameters.VirtualScreenHeight) + ParkGapY;
+            return (int)Math.Ceiling(SystemParameters.VirtualScreenHeight) + LegacyParkGapY;
         }
         catch
         {
-            return 4000;
+            return LegacyParkGapY;
+        }
+    }
+
+    /// <summary>把旧版挪到屏幕外的图标拉回可视区。记录可能已经丢失,所以按坐标本身判断。</summary>
+    private bool RepairLegacyParkedIcon(string path)
+    {
+        if (!_positions.TryParse(path, out var item)) return false;
+        try
+        {
+            if (!_positions.TryGet(item, out _, out var y) || y < ParkY()) return false;
+            if (!_positions.TrySet(item, 24, 24)) return false;
+            LogService.Info("DesktopIconLayout.RepairLegacy", $"path={path}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LogService.Warn("DesktopIconLayout.RepairLegacy", LogService.Truncate(ex.Message, 160));
+            return false;
+        }
+        finally
+        {
+            _positions.Free(item);
+        }
+    }
+
+    private bool RestoreAttributes(string path)
+    {
+        try
+        {
+            if (!File.Exists(path) && !Directory.Exists(path)) return false;
+
+            // 旧版本或外部脚本可能已经把条目标为 Hidden,但没有留下属性快照。
+            // 条目明确从盒子拖出时必须可见:有快照则恢复原属性,没有快照则清除 Hidden。
+            var current = File.GetAttributes(path);
+            var restored = _hiddenAttributes.TryGetValue(path, out var original)
+                ? original
+                : current & ~FileAttributes.Hidden;
+            File.SetAttributes(path, restored);
+            _hiddenAttributes.Remove(path);
+            return (current & FileAttributes.Hidden) != 0 || current != restored;
+        }
+        catch (Exception ex)
+        {
+            LogService.Warn("DesktopIconLayout.RestoreAttribute", LogService.Truncate(ex.Message, 160));
+            return false;
         }
     }
 
@@ -182,11 +224,15 @@ public class DesktopIconLayoutService : IDesktopIconLayoutService
 
     private sealed class Store
     {
-        public List<ParkedItem> Items { get; set; } = new();
+        public Dictionary<string, int> HiddenAttributes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, int> PriorSystemIcons { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>"显示隐藏项目"的原始值(未改动过则为 null)。</summary>
+        public int? PriorShowHidden { get; set; }
+        /// <summary>旧版遗留的停靠记录(只有路径有用),读出来是为了启动自愈。</summary>
+        public List<LegacyItem> Items { get; set; } = new();
     }
 
-    private sealed class ParkedItem
+    private sealed class LegacyItem
     {
         public string Path { get; set; } = string.Empty;
         public int X { get; set; }
@@ -201,10 +247,13 @@ public class DesktopIconLayoutService : IDesktopIconLayoutService
             var store = JsonSerializer.Deserialize<Store>(File.ReadAllText(_storePath));
             if (store is null) return;
 
-            foreach (var item in store.Items.Where(i => !string.IsNullOrWhiteSpace(i.Path)))
-                _parked[item.Path] = (item.X, item.Y);
+            foreach (var pair in store.HiddenAttributes)
+                _hiddenAttributes[pair.Key] = (FileAttributes)pair.Value;
             foreach (var pair in store.PriorSystemIcons)
                 _priorSystemIcons[pair.Key] = pair.Value;
+            foreach (var item in store.Items.Where(i => !string.IsNullOrWhiteSpace(i.Path)))
+                _legacyParked.Add(item.Path);
+            _priorShowHidden = store.PriorShowHidden;
         }
         catch (Exception ex)
         {
@@ -221,8 +270,10 @@ public class DesktopIconLayoutService : IDesktopIconLayoutService
 
             var store = new Store
             {
-                Items = _parked.Select(p => new ParkedItem { Path = p.Key, X = p.Value.X, Y = p.Value.Y }).ToList(),
-                PriorSystemIcons = new Dictionary<string, int>(_priorSystemIcons, StringComparer.OrdinalIgnoreCase)
+                HiddenAttributes = _hiddenAttributes.ToDictionary(p => p.Key, p => (int)p.Value, StringComparer.OrdinalIgnoreCase),
+                PriorSystemIcons = new Dictionary<string, int>(_priorSystemIcons, StringComparer.OrdinalIgnoreCase),
+                PriorShowHidden = _priorShowHidden,
+                Items = _legacyParked.Select(p => new LegacyItem { Path = p }).ToList()
             };
             File.WriteAllText(_storePath, JsonSerializer.Serialize(store));
         }

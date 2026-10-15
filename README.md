@@ -136,6 +136,8 @@ Go to **[Releases](../../releases)** and grab one of:
 
 ## 🧰 Support · 问题反馈
 
+**制作人 · Author** — QQ **790544312**
+
 遇到问题、需要反馈 bug 或交流使用方法,可以加入 QQ 群: **657713542**。
 
 For bugs, please open an [issue](../../issues) with reproduction steps and `logs/error.log`. Chinese users can also join QQ group **657713542** for support.
@@ -216,11 +218,26 @@ This drops `DesktopBox.ShellMenu.exe` into the `publish\` folder. Place it **nex
 
 ### 5️⃣ (Optional) Build installer · 打安装包
 
+One command does all three steps (publish + native helper + Inno Setup):
+
+一条命令搞定(发布单文件 + 编译 helper + 打安装包):
+
+```powershell
+.\scripts\build-installer.ps1
+```
+
+Or do it by hand: run step 3️⃣ + 4️⃣ first, then compile the script with Inno Setup 6.
+
+也可以手动:先跑上面的 3️⃣ + 4️⃣,再用 Inno Setup 6 编译安装脚本。
+
 ```bat
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" DesktopBox.iss
 ```
 
-→ produces `release\DesktopBoxSetup.exe`
+→ produces `release\DesktopBoxSetup.exe` (version and setup icon are taken from
+`src\DesktopBox\DesktopBox.csproj` / `src\DesktopBox\Resources\DesktopBox.ico`)
+
+→ 产出 `release\DesktopBoxSetup.exe`(版本号取自 csproj,安装程序图标取自 `Resources\DesktopBox.ico`)
 
 ---
 
