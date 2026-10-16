@@ -21,8 +21,17 @@ SolidCompression=yes
 LZMAUseSeparateProcess=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; 安装包自己请求管理员权限:双击 → 一次 UAC → 直接装完,不用再右键"以管理员身份运行"。
+; 之前是 PrivilegesRequired=lowest(纯当前用户、完全不提权),但用户机器上常留有老版本
+; "为所有用户安装"的登记(HKLM),清理它需要管理员,于是表现为"必须右键以管理员身份运行才能装"。
+;
+; 注意:DefaultDirName 仍然放在 {localappdata}(提权后仍是同一个用户的目录),
+; 这样① 用户数据(boxes.json / desktop-layer.json / logs / icons)原地保留不丢;
+;      ② 程序运行期照旧以普通权限写自己的目录,不需要管理员。
+; PrivilegesRequiredOverridesAllowed=commandline:不弹"安装模式"选择框(/CURRENTUSER 仍可用),
+; 保证默认流程就是"双击 → UAC → 装完"。
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=commandline
 WizardStyle=modern
 CompressionThreads=auto
 VersionInfoVersion={#MyAppVersion}
@@ -50,4 +59,7 @@ Name: "{group}\Uninstall DesktopBox"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\DesktopBox"; Filename: "{app}\DesktopBox.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\DesktopBox.exe"; Description: "Launch DesktopBox"; Flags: nowait postinstall skipifsilent
+; runasoriginaluser:安装包是提权运行的,直接启动会把主程序也带成管理员进程 ——
+; 那样它的桌面层/盒子窗口与 explorer 的交互、以及它自己目录的读写都会带上管理员上下文,
+; 所以必须用"原用户"身份启动(未提权的那份令牌)。
+Filename: "{app}\DesktopBox.exe"; Description: "Launch DesktopBox"; Flags: nowait postinstall skipifsilent runasoriginaluser
