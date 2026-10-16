@@ -34,6 +34,12 @@
     <s:String x:Key="box.menu.rename">Rename Box</s:String>
     <s:String x:Key="menu.renameItem">Rename</s:String>
     <s:String x:Key="menu.openItem">Open</s:String>
+    <s:String x:Key="menu.cutItem">Cut</s:String>
+    <s:String x:Key="menu.copyItem">Copy</s:String>
+    <s:String x:Key="menu.deleteItem">Delete</s:String>
+    <s:String x:Key="menu.propertiesItem">Properties</s:String>
+    <s:String x:Key="dialog.confirmDeleteOne">Move "{0}" to the Recycle Bin?</s:String>
+    <s:String x:Key="dialog.confirmDeleteMany">Move the selected {0} items to the Recycle Bin?</s:String>
     <s:String x:Key="dialog.renameItem.exists">That name already exists: {0}</s:String>
     <s:String x:Key="dialog.renameItem.invalid">The name contains characters that are not allowed.</s:String>
     <s:String x:Key="box.menu.removeSelected">Remove Selected from Box</s:String>

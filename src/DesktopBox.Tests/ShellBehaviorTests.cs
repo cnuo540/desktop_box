@@ -73,29 +73,34 @@ public class ShellBehaviorTests
     }
 
     [Fact]
-    public void BoxWindow_CanRepairHostAndChildZOrderAfterDesktopIconsToggle()
+    public void BoxWindow_CanRepositionItselfWithoutTouchingZOrderEveryFrame()
     {
         var sourcePath = FindRepositoryFile("src", "DesktopBox", "Views", "BoxWindow.cs");
         var source = File.ReadAllText(sourcePath);
 
+        // 盒子现在是顶层窗口(不再挂父窗口),但仍要能把"盒子排在桌面层之上"这件事做对 ——
+        // 形参 above 就是这个参照窗口,没有它时退回 HWND_TOP。
         source.Should().Contain("EnsureVisibleOnDesktopHost");
-        source.Should().Contain("GetParent");
-        source.Should().Contain("SetParent");
+        source.Should().Contain("insertAfter");
         source.Should().Contain("HWND_TOP");
-        source.Should().Contain("SWP_CROSSPROC");
-        // 逐帧只调矩形不重排 Z 序（每帧 HWND_TOP 会逼图标层重排=缩放闪烁主因）。
+        // 逐帧只调矩形不重排 Z 序（每帧重排会逼图标层重绘=缩放闪烁主因）。
         source.Should().Contain("SWP_NOZORDER");
     }
 
     [Fact]
-    public void BoxWindow_KeepsDesktopChildAtTopWhenMovingOrResizing()
+    public void BoxWindow_StaysInTheNormalBand_NotTopmost()
     {
         var sourcePath = FindRepositoryFile("src", "DesktopBox", "Views", "BoxWindow.cs");
         var source = File.ReadAllText(sourcePath);
 
+        // 关键约束:盒子必须留在<b>非置顶</b>档 —— 置顶会压住普通窗口(用户明确否决),
+        // 而"非置顶 + 逐像素 alpha"同样能真透明(实测:非置顶顶层窗口也走 UpdateLayeredWindow)。
+        source.Should().Contain("HWND_NOTOPMOST");
+        source.Should().NotContain("HWND_TOPMOST");
+        // 逐像素 alpha 必须开,否则半透明底会被合成成不透明黑
+        source.Should().Contain("UsesPerPixelOpacity = true");
         source.Should().Contain("MoveResize(Native.User32.HWND_TOP)");
         source.Should().Contain("private void MoveResize(IntPtr insertAfter)");
-        source.Should().NotContain("HWND_NOTOPMOST");
     }
 
     [Fact]
@@ -278,7 +283,9 @@ public class ShellBehaviorTests
         tile.Should().NotContain("SetWindowPos(\r\n            boxHandle");
         tile.Should().NotContain("HwndSource.FromVisual");
         overlay.Should().Contain("AllowDrop = true");
-        overlay.Should().Contain("ParentWindow = parent");
+        // 覆盖层是顶层分层窗口(挂成子窗口会丢掉 WS_EX_LAYERED,导致整屏变黑)
+        overlay.Should().Contain("WS_POPUP");
+        overlay.Should().Contain("HWND_TOPMOST");
         overlay.Should().Contain("ApplyExclusionRegion");
         overlay.Should().Contain("BuildExclusionRects");
         overlay.Should().Contain("SetWindowRgn");
@@ -289,7 +296,7 @@ public class ShellBehaviorTests
     }
 
     [Fact]
-    public void DesktopChildWindows_ConvertVirtualScreenCoordinatesToParentClientCoordinates()
+    public void DesktopWindows_UseScreenCoordinatesBecauseTheyAreAllTopLevel()
     {
         var user32 = File.ReadAllText(FindRepositoryFile("src", "DesktopBox", "Native", "User32.cs"));
         var boxWindow = File.ReadAllText(FindRepositoryFile("src", "DesktopBox", "Views", "BoxWindow.cs"));
@@ -297,9 +304,89 @@ public class ShellBehaviorTests
 
         user32.Should().Contain("ScreenToClient");
         user32.Should().Contain("ScreenPointToClient");
-        boxWindow.Should().Contain("ScreenPointToClient(parent, box.X, box.Y)");
-        boxWindow.Should().Contain("ScreenPointToClient(parent, Box.X, Box.Y)");
-        overlay.Should().Contain("ScreenPointToClient(parent, bounds.Left, bounds.Top)");
+
+        // 盒子与拖放覆盖层现在都是<b>顶层</b>窗口 —— 模型坐标就是屏幕坐标,不再做父窗口客户区换算。
+        // 子窗口做不了半透明:与父窗口之间不做 alpha 混合,半透明底会被合成成不透明黑。
+        boxWindow.Should().NotContain("ParentWindow = parent");
+        boxWindow.Should().NotContain("ScreenPointToClient");
+        boxWindow.Should().Contain("WS_POPUP");
+        boxWindow.Should().NotContain("HWND_TOPMOST");
+
+        overlay.Should().NotContain("ParentWindow = parent");
+        overlay.Should().Contain("WS_POPUP");
+        overlay.Should().Contain("HWND_TOPMOST");
+    }
+
+    [Fact]
+    public void BoxBackground_IsTranslucent_BecauseTheBoxIsATopLevelAlphaWindow()
+    {
+        var xaml = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml"));
+        var code = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Controls", "BoxControl.xaml.cs"));
+
+        // 半透明底:盒子窗口是"顶层 + 非置顶 + 逐像素 alpha",alpha 真的生效、真的透出壁纸。
+        xaml.Should().Contain("x:Name=\"Card\"");
+        xaml.Should().Contain("Background=\"#99000000\"");
+        xaml.Should().Contain("Background=\"#66000000\"");
+        xaml.Should().Contain("Background=\"#33000000\"");
+        // 滑条缩的是 A 通道(越调越透)
+        code.Should().Contain("BaseCardColor.A * factor");
+
+        // 这两个条件缺一不可:少了逐像素 alpha 半透明会变成不透明黑;
+        // 而子窗口上开逐像素 alpha 会被 WPF 剥掉 WS_EX_LAYERED,同样失效。
+        var boxWindow = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Views", "BoxWindow.cs"));
+        boxWindow.Should().Contain("UsesPerPixelOpacity = true");
+        boxWindow.Should().Contain("WS_POPUP");
+        boxWindow.Should().NotContain("WS_CHILD");
+        boxWindow.Should().NotContain("HWND_TOPMOST");
+    }
+
+    [Fact]
+    public void LayeredWindowsWithTransparentContent_EnablePerPixelOpacity()
+    {
+        // 这是本项目已经犯过<b>两次</b>的错:窗口带 WS_EX_LAYERED、内容又是透明/半透明的,
+        // 却没开 UsesPerPixelOpacity。此时那层 WS_EX_LAYERED 的 alpha 从未被初始化,透明像素会被
+        // 合成成<b>不透明黑</b>:
+        //   ① 桌面层(DesktopLayerWindow) —— 桌面图标底下出现整块黑矩形;
+        //   ② 拖放覆盖层(DesktopDropOverlay) —— 拖动桌面文件时整个屏幕变黑,松手才恢复。
+
+        var overlay = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Controls", "DesktopDropOverlay.cs"));
+        overlay.Should().Contain("UsesPerPixelOpacity = true");
+        overlay.Should().NotContain("UsesPerPixelOpacity = false");
+
+        var layer = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Views", "DesktopLayerWindow.cs"));
+        layer.Should().Contain("UsesPerPixelOpacity = true");
+        layer.Should().NotContain("UsesPerPixelOpacity = false");
+
+        // 盒子同样需要逐像素 alpha(它是半透明的顶层窗口,理由见 BoxWindow 的说明)。
+        var box = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Views", "BoxWindow.cs"));
+        box.Should().Contain("UsesPerPixelOpacity = true");
+        box.Should().NotContain("UsesPerPixelOpacity = false");
+    }
+
+    [Fact]
+    public void TransparentOverlays_MustBeTopLevel_BecauseChildWindowsLoseLayeredFlag()
+    {
+        // 实测得到的硬约束:子窗口 + UsesPerPixelOpacity=true 会被 WPF <b>剥掉 WS_EX_LAYERED</b>
+        // (建出来 ex=0x00000080,layered=False),于是"近乎全透明的黑色面板"变成不透明黑 ——
+        // 拖动桌面文件时整屏变黑就是这么来的。透明覆盖层必须是顶层窗口。
+        var overlay = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Controls", "DesktopDropOverlay.cs"));
+
+        overlay.Should().Contain("WS_POPUP");
+        overlay.Should().NotContain("ParentWindow = parent");
+        overlay.Should().NotContain("WS_CHILD");
+
+        // 桌面层同理(它要透出壁纸),也必须是顶层
+        var layer = File.ReadAllText(
+            FindRepositoryFile("src", "DesktopBox", "Views", "DesktopLayerWindow.cs"));
+        layer.Should().Contain("WS_POPUP");
+        layer.Should().NotContain("WS_CHILD");
     }
 
     [Fact]

@@ -350,13 +350,70 @@ cleanup:
     return result;
 }
 
+// ===== 预热 =====
+//
+// 实测(本机):shell 扩展<b>首次</b>加载时 QueryContextMenu 要 8 秒以上,热了只要 0.28~2.5 秒。
+// 这段代价如果落在用户第一次右键上,菜单就要等好几秒。所以 App 在启动后用 --warm 在后台
+// 把菜单"建一遍再销毁",把扩展提前加载进系统和本进程缓存,用户真正右键时就快了。
+//
+// 只建菜单、不显示、不 Invoke:不会弹任何界面,也不产生副作用。
+static int WarmShellExtensions(const wchar_t* path) {
+    if (!path || !*path) return DBX_RESULT_FAILED;
+
+    HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool coInitialized = SUCCEEDED(hrCo);
+    if (FAILED(hrCo)) return DBX_RESULT_FAILED;
+
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    IShellFolder* parent = nullptr;
+    IContextMenu* cm = nullptr;
+    PCUITEMID_CHILD childPidl = nullptr;
+    HMENU hMenu = nullptr;
+    int result = DBX_RESULT_FAILED;
+
+    HRESULT hr = SHParseDisplayName(path, nullptr, &pidl, 0, nullptr);
+    if (FAILED(hr) || !pidl) goto warmCleanup;
+
+    hr = SHBindToParent(pidl, IID_PPV_ARGS(&parent), &childPidl);
+    if (FAILED(hr) || !parent) goto warmCleanup;
+
+    hr = parent->GetUIObjectOf(nullptr, 1, &childPidl, IID_IContextMenu, nullptr,
+                               reinterpret_cast<void**>(&cm));
+    if (FAILED(hr) || !cm) goto warmCleanup;
+
+    hMenu = CreatePopupMenu();
+    if (hMenu) {
+        // 这一步就是慢的那一步 —— 扩展在这里被加载。
+        cm->QueryContextMenu(hMenu, 0, DBX_CMD_FIRST, DBX_CMD_LAST, CMF_NORMAL);
+        DbgLog("warm-QueryContextMenu-done");
+        result = 0;
+    }
+
+warmCleanup:
+    if (hMenu) DestroyMenu(hMenu);
+    if (cm) cm->Release();
+    if (parent) parent->Release();
+    if (pidl) ILFree(pidl);
+    if (coInitialized) CoUninitialize();
+    return result;
+}
+
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv || (argc != 4 && argc != 5)) {
-        if (argv) LocalFree(argv);
+    if (!argv) return 1;
+
+    // --warm <path> : 只预热,不弹菜单。参数个数与正常路径不同,必须先判。
+    if (argc == 3 && wcscmp(argv[1], L"--warm") == 0) {
+        const int warmResult = WarmShellExtensions(argv[2]);
+        LocalFree(argv);
+        return warmResult;
+    }
+
+    if (argc != 4 && argc != 5) {
+        LocalFree(argv);
         return 1;
     }
 

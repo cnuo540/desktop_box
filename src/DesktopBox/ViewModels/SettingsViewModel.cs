@@ -51,6 +51,42 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>盒子背景的不透明度(0.1~1.0,持久化)。只作用于背景色 —— 图标和文字不跟着变淡。
+    /// 真正的状态与保存都归 MainViewModel(和托盘菜单里那个滑条读写同一个值),
+    /// 这里只做设置面板的双向代理:拖动即时生效、由 MainViewModel 防抖存盘。</summary>
+    public double BoxOpacity
+    {
+        get => Main.BoxOpacity;
+        set
+        {
+            var clamped = Math.Clamp(value, 0.1, 1.0);
+            if (Math.Abs(Main.BoxOpacity - clamped) < 0.0005) return;
+            try
+            {
+                Main.BoxOpacity = clamped;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(BoxOpacityPercent));
+            }
+            catch (Exception ex)
+            {
+                ReportPersistenceFailure(ex);
+            }
+        }
+    }
+
+    /// <summary>滑条右侧的百分比读数(1.0 → "100%")。</summary>
+    public string BoxOpacityPercent => $"{Math.Round(BoxOpacity * 100)}%";
+
+    /// <summary>设置面板底部显示的版本号。取自程序集,跟着 csproj 的 &lt;Version&gt; 走,不必手改这里。</summary>
+    public string VersionText
+    {
+        get
+        {
+            var version = typeof(SettingsViewModel).Assembly.GetName().Version;
+            return version is null ? "DesktopBox" : $"DesktopBox v{version.Major}.{version.Minor}.{version.Build}";
+        }
+    }
+
     private MainViewModel? _main;
     private MainViewModel Main =>
         _main ??= App.Services.GetRequiredService<MainViewModel>();

@@ -76,8 +76,29 @@ public static class User32
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
+    /// <summary>
+    /// 把"可以抢占前台"的权限授予某个进程。必须在<b>创建该进程之前</b>调用,并传它的 pid。
+    ///
+    /// 为什么需要:右键菜单 helper 是独立进程,它内部要 SetForegroundWindow 自己的菜单窗口,
+    /// 否则 TrackPopupMenuEx 会<b>立刻返回 0</b>(菜单根本不显示)。Windows 默认禁止非前台进程
+    /// 抢前台焦点,只有当前前台进程显式授权才允许 —— 而桌面层窗口是 WS_EX_NOACTIVATE 的,
+    /// 它并不是前台进程,所以 helper 弹菜单必然失败。ASFW_ANY 表示"任何进程都放行"。
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AllowSetForegroundWindow(int dwProcessId);
+
+    /// <summary>AllowSetForegroundWindow 的特殊值:放行所有进程。</summary>
+    public const int ASFW_ANY = -1;
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+    /// <summary>取窗口类名的托管封装。菜单窗口的类名是 <c>#32768</c>。</summary>
+    public static string GetClassNameOf(IntPtr hWnd)
+    {
+        var sb = new System.Text.StringBuilder(256);
+        return GetClassName(hWnd, sb, sb.Capacity) > 0 ? sb.ToString() : string.Empty;
+    }
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
@@ -105,7 +126,24 @@ public static class User32
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr GetParent(IntPtr hWnd);
 
+    /// <summary>取窗口所属进程/线程 id(用于判断命中点上的窗口是不是本进程的)。</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    /// <summary>GW_CHILD / GW_HWNDNEXT 等 GetWindow 方向常量。</summary>
+    public const uint GW_HWNDFIRST = 0;
+    public const uint GW_HWNDLAST = 1;
+    public const uint GW_HWNDNEXT = 2;
+    public const uint GW_HWNDPREV = 3;
+    public const uint GW_OWNER = 4;
+    public const uint GW_CHILD = 5;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
     public static readonly IntPtr HWND_TOP = IntPtr.Zero;
+    public static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
+    public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOSIZE = 0x0001;

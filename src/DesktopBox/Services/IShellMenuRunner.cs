@@ -38,4 +38,16 @@ public interface IShellMenuRunner : IDisposable
         int screenY,
         ShellMenuCommands commands = ShellMenuCommands.RemoveFromBox,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 终止当前正在运行的助手进程(若有),并让它尽快退出。
+    /// 供调用方在"助手卡住不弹菜单"时改走兜底菜单 —— 见 <see cref="ShellMenuRunStatus.TimedOut"/>。
+    /// </summary>
+    void KillActive();
+
+    /// <summary>
+    /// 后台预热 shell 扩展(只建菜单再销毁,不显示界面)。
+    /// 实测扩展首次加载要 8 秒以上,提前付掉这段代价,用户第一次右键就不必干等。
+    /// </summary>
+    void WarmUp(IEnumerable<string> paths);
 }

@@ -1,10 +1,12 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using DesktopBox.Models;
 using DesktopBox.Services;
@@ -591,20 +593,25 @@ public partial class BoxControl : UserControl
         ContextMenu.VerticalOffset = 0;
     }
 
-    /// <summary>盒子背景的基准色(XAML 里 Card 的 #99000000)。滑条按比例缩它的 A 通道 ——
-    /// 只改背景,图标和文字保持清晰。</summary>
+    /// <summary>盒子背景的基准色(XAML 里 Card 的 #99000000)。</summary>
     private static readonly Color BaseCardColor = Color.FromArgb(0x99, 0, 0, 0);
 
     private bool _opacitySubscribed;
 
-    /// <summary>按全局设置刷新盒子背景不透明度。</summary>
+    /// <summary>
+    /// 按全局设置刷新盒子背景不透明度:滑条按比例缩基准色的 A 通道,越调越透。
+    ///
+    /// 半透明能生效,是因为盒子窗口是"顶层 + 非置顶 + 逐像素 alpha"(见 BoxWindow 的说明)。
+    /// 子窗口时代同样的颜色会被合成成不透明黑,所以那时只能退回不透明面板。
+    /// </summary>
     private void ApplyBoxOpacity()
     {
         try
         {
-            var factor = Math.Clamp(MainVm.BoxOpacity, 0.1, 1.0);
+            var factor = Math.Clamp(MainVm.BoxOpacity, 0.0, 1.0);
             var alpha = (byte)Math.Round(BaseCardColor.A * factor);
-            var brush = new SolidColorBrush(Color.FromArgb(alpha, BaseCardColor.R, BaseCardColor.G, BaseCardColor.B));
+            var brush = new SolidColorBrush(Color.FromArgb(
+                alpha, BaseCardColor.R, BaseCardColor.G, BaseCardColor.B));
             brush.Freeze();
             Card.Background = brush;
         }

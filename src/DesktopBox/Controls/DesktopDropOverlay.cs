@@ -8,12 +8,11 @@ namespace DesktopBox.Controls;
 public sealed class DesktopDropOverlay : IDisposable
 {
     private const double BoxExclusionPadding = 8;
-    private const int WS_CHILD = 0x40000000;
+    private const int WS_POPUP = unchecked((int)0x80000000);
     private const int WS_VISIBLE = 0x10000000;
-    private const int WS_CLIPSIBLINGS = 0x04000000;
-    private const int WS_CLIPCHILDREN = 0x02000000;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int WS_EX_LAYERED = 0x00080000;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
 
     private readonly HwndSource _source;
     private bool _disposed;
@@ -26,6 +25,8 @@ public sealed class DesktopDropOverlay : IDisposable
         {
             Width = Math.Max(1, bounds.Width / scale.X),
             Height = Math.Max(1, bounds.Height / scale.Y),
+            // 几乎全透明:这块面板只是"接住拖放"用的,不该看得见。
+            // 但它必须真的透明 —— 见 TryCreate 里 UsesPerPixelOpacity 的说明。
             Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
             AllowDrop = true
         };
@@ -51,38 +52,56 @@ public sealed class DesktopDropOverlay : IDisposable
     public static DesktopDropOverlay? TryCreate(IEnumerable<Rect> excludedBounds)
     {
         // 与主窗口同策略（Native.User32.ResolveDesktopHost）：DefView 优先保证可见。
-        var parent = Native.User32.ResolveDesktopHost();
-        if (parent == IntPtr.Zero || !Native.User32.IsWindow(parent))
+        // 覆盖层现在是顶层窗口、不再挂到宿主下,但这次探测仍然有用:宿主还没就绪(explorer 正在
+        // 重启)时说明桌面本身不可用,此时建覆盖层只会添乱。
+        var host = Native.User32.ResolveDesktopHost();
+        if (host == IntPtr.Zero || !Native.User32.IsWindow(host))
             return null;
 
         var bounds = GetVirtualDesktopBounds();
         if (bounds.Width <= 0 || bounds.Height <= 0)
             return null;
-        var clientPosition = Native.User32.ScreenPointToClient(parent, bounds.Left, bounds.Top);
 
+        // 必须是<b>顶层</b>分层窗口,不能挂成桌面宿主的子窗口。
+        // 实测:子窗口 + UsesPerPixelOpacity=true 会被 WPF 剥掉 WS_EX_LAYERED
+        // (建出来 ex=0x00000080,layered=False),于是这块近乎全透明的面板变成<b>不透明黑</b> ——
+        // 拖动桌面文件时整个屏幕变黑,松手(覆盖层销毁)才恢复。
+        // 顶层窗口才能真正逐像素透明;而它只在拖拽期间存在,置顶不会长期影响任何东西。
         var parameters = new HwndSourceParameters("DesktopBox.DropOverlay")
         {
-            ParentWindow = parent,
-            WindowStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-            ExtendedWindowStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-            PositionX = clientPosition.X,
-            PositionY = clientPosition.Y,
+            WindowStyle = WS_POPUP | WS_VISIBLE,
+            ExtendedWindowStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            PositionX = (int)Math.Round(bounds.Left),
+            PositionY = (int)Math.Round(bounds.Top),
             Width = Math.Max(1, (int)Math.Ceiling(bounds.Width)),
             Height = Math.Max(1, (int)Math.Ceiling(bounds.Height)),
-            UsesPerPixelOpacity = false
+            UsesPerPixelOpacity = true
         };
 
         var source = new HwndSource(parameters);
         source.CompositionTarget.BackgroundColor = Colors.Transparent;
+        // 在盒子位置挖洞:盒子是桌面宿主的子窗口,本来就绘制在顶层窗口之上,但托盘/弹窗等
+        // 置顶窗口会盖住盒子 —— 挖洞保证拖到盒子上的落点仍归盒子,不会被这层吃掉。
         ApplyExclusionRegion(source.Handle, bounds, excludedBounds);
         Native.User32.SetWindowPos(
             source.Handle,
-            Native.User32.HWND_TOP,
+            Native.User32.HWND_TOPMOST,
             parameters.PositionX,
             parameters.PositionY,
             parameters.Width,
             parameters.Height,
-            Native.User32.SWP_CROSSPROC);
+            Native.User32.SWP_SHOWWINDOW | Native.User32.SWP_NOACTIVATE);
+
+        // 诊断(临时):确认分层与置顶真的生效
+        try
+        {
+            var ex = Native.User32.GetWindowLong(source.Handle, Native.User32.GWL_EXSTYLE);
+            Services.LogService.Info("DropOverlay.Create",
+                $"hwnd=0x{source.Handle:X} ex=0x{ex:X8} layered={(ex & 0x00080000) != 0} " +
+                $"parent=0x{Native.User32.GetParent(source.Handle):X} excluded={excludedBounds.Count()} " +
+                $"desktop={bounds.Width:0}x{bounds.Height:0}");
+        }
+        catch { }
 
         return new DesktopDropOverlay(source, bounds);
     }

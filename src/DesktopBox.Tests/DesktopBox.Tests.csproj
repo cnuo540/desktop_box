@@ -23,6 +23,14 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- WPF 的 BAML/XAML 读取器不是线程安全的。多个测试类并行时,各自起的 STA 线程会
+       同时首次解析 BoxControl.xaml,随机抛 XamlParseException(报错成员名每次不同:
+       RowDefinitions / Name / ItemWidth / TargetType…)。必须随程序集一起复制,
+       否则测试宿主读不到这份配置。 -->
+  <ItemGroup>
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\DesktopBox\DesktopBox.csproj" />
   </ItemGroup>

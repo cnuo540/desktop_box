@@ -7,14 +7,29 @@ using DesktopBox.ViewModels;
 
 namespace DesktopBox.Views;
 
+/// <summary>
+/// 盒子窗口 —— <b>顶层 + 非置顶 + 逐像素 alpha</b>。
+///
+/// 这个组合是"真透明 + 不压住普通窗口"的唯一解,而它成立的前提是把两个特性拆开看
+/// (实测确认):<b>逐像素 alpha 与 WS_EX_TOPMOST 是彼此独立的</b> ——
+/// 非置顶的顶层窗口同样走 UpdateLayeredWindow 路径,所以能真透明;
+/// 而它不在置顶带里,普通窗口照样能盖住它。
+///
+/// 为什么不能用子窗口(桌面宿主的子窗口):Windows 的子窗口与父窗口之间<b>不做 alpha 混合</b>,
+/// 半透明底会被合成成不透明黑。且子窗口上设 UsesPerPixelOpacity=true 会被 WPF
+/// <b>剥掉 WS_EX_LAYERED</b>(实测建出来 ex=0x00000080),退化成更糟的普通不透明窗口。
+/// 其余机制也全部实测无效:DwmExtendFrameIntoClientArea(hr=0x80070057)、LWA_COLORKEY(err=87)。
+///
+/// 代价(已接受):盒子在普通窗口档里,不是子窗口那种"永远压在普通窗口之上"。
+/// 谁在上面取决于 z 序 —— 点盒子它会抬起来,点别的窗口那个窗口会盖住它。
+/// </summary>
 public sealed class BoxWindow : IDisposable
 {
-    private const int WS_CHILD = 0x40000000;
+    private const int WS_POPUP = unchecked((int)0x80000000);
     private const int WS_VISIBLE = 0x10000000;
-    private const int WS_CLIPSIBLINGS = 0x04000000;
-    private const int WS_CLIPCHILDREN = 0x02000000;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
     private const int WS_EX_LAYERED = 0x00080000;
+    private const int WS_EX_NOACTIVATE = 0x08000000;
 
     private readonly HwndSource _source;
     private readonly IntPtr _handle;
@@ -25,22 +40,26 @@ public sealed class BoxWindow : IDisposable
     {
         MainVm = mainVm;
         Box = box;
-        var clientPosition = Native.User32.ScreenPointToClient(parent, box.X, box.Y);
 
+        // 顶层窗口:模型坐标就是屏幕坐标,不需要再换算父窗口客户区。
+        // 注意这里<b>不加 WS_EX_TOPMOST</b> —— 置顶会让盒子压住普通窗口(已被否决)。
         var parameters = new HwndSourceParameters(box.Header)
         {
-            ParentWindow = parent,
-            WindowStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
-            ExtendedWindowStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED,
-            PositionX = clientPosition.X,
-            PositionY = clientPosition.Y,
+            WindowStyle = WS_POPUP | WS_VISIBLE,
+            ExtendedWindowStyle = WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
+            PositionX = (int)Math.Round(box.X),
+            PositionY = (int)Math.Round(box.Y),
             Width = Math.Max(1, (int)Math.Round(box.Width)),
             Height = Math.Max(1, (int)Math.Round(box.RenderHeight)),
-            UsesPerPixelOpacity = false
+            UsesPerPixelOpacity = true
         };
 
         _source = new HwndSource(parameters);
         _handle = _source.Handle;
+        // 显式落在普通(非置顶)档:HwndSource 建出来的窗口默认就在这一档,这里再钉一次,
+        // 免得将来有人顺手加了 WS_EX_TOPMOST 而没人发现盒子开始压住普通窗口。
+        Native.User32.SetWindowPos(_handle, Native.User32.HWND_NOTOPMOST, 0, 0, 0, 0,
+            Native.User32.SWP_NOMOVE | Native.User32.SWP_NOSIZE | Native.User32.SWP_NOACTIVATE);
         _source.Disposed += OnSourceDisposed;
         _source.CompositionTarget.BackgroundColor = System.Windows.Media.Colors.Transparent;
         _content = new BoxControl
@@ -82,31 +101,35 @@ public sealed class BoxWindow : IDisposable
         catch { return "describe-failed"; }
     }
 
-    public void EnsureVisibleOnDesktopHost(IntPtr parent)
+    /// <summary>
+    /// 把盒子摆回模型记录的位置并确保可见。
+    ///
+    /// 盒子现在是<b>顶层</b>窗口,没有父窗口可挂 —— 形参 <paramref name="above"/> 是"盒子应排在谁上面"
+    /// 的参照窗口(桌面层),保留它是为了维持 z 序:盒子要压在桌面磁贴之上、普通窗口之下。
+    /// 模型坐标就是屏幕坐标,不再做父窗口客户区换算。
+    /// </summary>
+    public void EnsureVisibleOnDesktopHost(IntPtr above)
     {
-        if (_disposed || _source.IsDisposed || parent == IntPtr.Zero)
+        if (_disposed || _source.IsDisposed)
             return;
-        if (!Native.User32.IsWindow(parent) || !Native.User32.IsWindow(_handle))
+        if (!Native.User32.IsWindow(_handle))
             return;
 
         try
         {
-            if (Native.User32.GetParent(_handle) != parent)
-            {
-                // 可见窗口跨进程换父先隐藏，避免撕裂/闪。失败只记日志，不抛。
-                Native.User32.ShowWindow(_handle, 0); // SW_HIDE
-                Native.User32.SetParent(_handle, parent);
-            }
+            // 有参照窗口就排在它上面(盒子压在磁贴之上);没有就退到普通档顶部。
+            var insertAfter = above != IntPtr.Zero && Native.User32.IsWindow(above)
+                ? above
+                : Native.User32.HWND_TOP;
 
-            var clientPosition = Native.User32.ScreenPointToClient(parent, Box.X, Box.Y);
             Native.User32.SetWindowPos(
                 _handle,
-                Native.User32.HWND_TOP,
-                clientPosition.X,
-                clientPosition.Y,
+                insertAfter,
+                (int)Math.Round(Box.X),
+                (int)Math.Round(Box.Y),
                 Math.Max(1, (int)Math.Round(Box.Width)),
                 Math.Max(1, (int)Math.Round(Box.RenderHeight)),
-                Native.User32.SWP_CROSSPROC);
+                Native.User32.SWP_NOACTIVATE);
         }
         catch (Exception ex)
         {
@@ -194,29 +217,56 @@ public sealed class BoxWindow : IDisposable
             _content.Width = contentW;
             _content.Height = contentH;
         }
-        var parent = Native.User32.GetParent(_handle);
-        var clientPosition = Native.User32.ScreenPointToClient(parent, Box.X, Box.Y);
+        // 顶层窗口:模型坐标就是屏幕坐标。
+        var screenX = (int)Math.Round(Box.X);
+        var screenY = (int)Math.Round(Box.Y);
         int w = Math.Max(1, (int)Math.Round(Box.Width));
         int h = Math.Max(1, (int)Math.Round(Box.RenderHeight));
         // 去重：四角缩放时 X/Y/W/H 四个属性各触发一次 MoveResize，圆整后矩形常常无变化；
-        // 空刷一次跨进程 SetWindowPos 就逼图标层重绘一次，闪烁就是这么来的。
-        if (clientPosition.X == _lastX && clientPosition.Y == _lastY && w == _lastW && h == _lastH)
+        // 空刷一次 SetWindowPos 就逼重绘一次，闪烁就是这么来的。
+        if (screenX == _lastX && screenY == _lastY && w == _lastW && h == _lastH)
             return;
-        _lastX = clientPosition.X;
-        _lastY = clientPosition.Y;
+        _lastX = screenX;
+        _lastY = screenY;
         _lastW = w;
         _lastH = h;
-        // 交互拖动帧必须同步应用（无 ASYNCWINDOWPOS）：异步会把移动投递给 explorer
-        // 线程按它自己的节奏消化，时序不均 + DWM 对旧表面的拉伸 = 拖影/抖动。
-        // 已带 NOZORDER 不重排兄弟，同步是安全的；挂死风险由单独的 SendMessageTimeout 兜住。
         Native.User32.SetWindowPos(
             _handle,
             insertAfter,
-            clientPosition.X,
-            clientPosition.Y,
+            screenX,
+            screenY,
             w,
             h,
             Native.User32.SWP_NOACTIVATE | extraFlags);
+
+        ApplyRoundedRegion(w, h, scale);
+    }
+
+    /// <summary>Card 的 CornerRadius(DIP)。</summary>
+    private const double CornerRadiusDip = 10;
+
+    /// <summary>
+    /// 把窗口本身裁成圆角。盒子是子窗口,圆角外的像素是透明的,而子窗口的透明像素会被合成成
+    /// <b>黑色</b> —— 不裁的话四个角就是黑角。用圆角区域裁掉,窗口之外照旧归 explorer。
+    /// </summary>
+    private void ApplyRoundedRegion(int w, int h, (double X, double Y) scale)
+    {
+        try
+        {
+            if (w <= 0 || h <= 0) return;
+            // 椭圆宽高 = 直径,所以传 2×半径;半径按 DPI 缩放,和 WPF 的圆角对齐。
+            var r = (int)Math.Round(CornerRadiusDip * (scale.X <= 0 ? 1 : scale.X)) * 2;
+            if (r < 2) return;
+
+            var region = Native.Gdi32.CreateRoundRectRgn(0, 0, w + 1, h + 1, r, r);
+            if (region == IntPtr.Zero) return;
+            if (Native.User32.SetWindowRgn(_handle, region, true) == 0)
+                Native.Gdi32.DeleteObject(region);   // 失败才由我们释放;成功则系统接管
+        }
+        catch (Exception ex)
+        {
+            Services.LogService.Error(ex, "BoxWindow.ApplyRoundedRegion");
+        }
     }
 
     private (double X, double Y) GetDpiScale()
@@ -236,12 +286,12 @@ public sealed class BoxWindow : IDisposable
         try { Interlocked.Exchange(ref _resizeFlushTimer, null)?.Dispose(); } catch { }
         try
         {
-            // 先从 explorer 子链表摘掉再销毁：explorer 正枚举/绘制子窗口时直接销毁
-            // 会损坏子链表（桌面闪一下/图标重排的来源之一）。
+            // 顶层窗口:隐藏即可,没有跨进程子链表要摘。真挂了父窗口才摘,以防将来又改回子窗口。
             if (Native.User32.IsWindow(_handle))
             {
                 Native.User32.ShowWindow(_handle, 0); // SW_HIDE
-                Native.User32.SetParent(_handle, IntPtr.Zero);
+                if (Native.User32.GetParent(_handle) != IntPtr.Zero)
+                    Native.User32.SetParent(_handle, IntPtr.Zero);
             }
         }
         catch { }

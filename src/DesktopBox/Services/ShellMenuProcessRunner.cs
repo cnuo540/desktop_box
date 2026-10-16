@@ -67,6 +67,23 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
             lock (_processGate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
+
+                // 关键:必须在 CreateProcess 之前授权,否则 helper 里的 SetForegroundWindow 会失败,
+                // TrackPopupMenuEx 立刻返回 0 —— 表现就是"右键毫无反应"(菜单根本没弹)。
+                // 桌面层窗口是 WS_EX_NOACTIVATE 的,本身不是前台进程,所以这里必须显式放行。
+                try
+                {
+                    if (!Native.User32.AllowSetForegroundWindow(Native.User32.ASFW_ANY))
+                    {
+                        LogService.Warn("ShellMenu.AllowForeground",
+                            $"AllowSetForegroundWindow 失败 err={Marshal.GetLastWin32Error()}(菜单可能弹不出来)");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogService.Warn("ShellMenu.AllowForeground", LogService.Truncate(ex.Message, 120));
+                }
+
                 try
                 {
                     process = Process.Start(startInfo);
@@ -157,6 +174,71 @@ public sealed class ShellMenuProcessRunner : IShellMenuRunner
         catch
         {
             // The helper may have exited between checks or already been killed by the job object.
+        }
+    }
+
+    /// <summary>
+    /// 终止当前正在运行的助手进程(若有)。
+    ///
+    /// 为什么需要:第三方 shell 扩展(云盘/杀软之类)偶尔会让 helper 卡在 QueryContextMenu
+    /// 里 —— 实测表现为 cpu=0s、无任何菜单窗口、线程全部 Wait,而它不退出就意味着调用方
+    /// 永远等不到结果。调用方据此改走兜底菜单,右键才不会"没反应"。
+    /// </summary>
+    public void KillActive()
+    {
+        Process[] active;
+        lock (_processGate)
+        {
+            active = _activeProcesses.ToArray();
+        }
+
+        foreach (var process in active)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    LogService.Warn("ShellMenu.KillStuck",
+                        $"右键助手卡住,已终止 pid={process.Id}");
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+                // 可能刚好自己退出了
+            }
+        }
+    }
+
+    /// <summary>
+    /// 后台预热:让助手把 shell 扩展提前加载好,这样用户第一次右键不用等好几秒。
+    ///
+    /// 实测:扩展首次加载时 QueryContextMenu 要 8 秒以上,热了只要 0.3~2.5 秒。这段代价放在
+    /// 启动后台付掉,比让用户右键时干等好得多。预热只建菜单再销毁,不显示界面、不触发任何动作。
+    /// 失败无所谓,下次右键照走正常路径。
+    /// </summary>
+    public void WarmUp(IEnumerable<string> paths)
+    {
+        // 预热进程不进 _activeProcesses:它不是"正在弹的菜单",不该被杀掉/被当成占用。
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrWhiteSpace(path)) continue;
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = _helperPath,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                startInfo.ArgumentList.Add("--warm");
+                startInfo.ArgumentList.Add(path);
+                Process.Start(startInfo)?.Dispose();
+            }
+            catch
+            {
+                // helper 缺失/被占用都无所谓 —— 预热是可选的
+            }
         }
     }
 

@@ -39,6 +39,12 @@
     <s:String x:Key="box.menu.rename">重命名盒子</s:String>
     <s:String x:Key="menu.renameItem">重命名</s:String>
     <s:String x:Key="menu.openItem">打开</s:String>
+    <s:String x:Key="menu.cutItem">剪切</s:String>
+    <s:String x:Key="menu.copyItem">复制</s:String>
+    <s:String x:Key="menu.deleteItem">删除</s:String>
+    <s:String x:Key="menu.propertiesItem">属性</s:String>
+    <s:String x:Key="dialog.confirmDeleteOne">确定把“{0}”移到回收站吗？</s:String>
+    <s:String x:Key="dialog.confirmDeleteMany">确定把选中的 {0} 项移到回收站吗？</s:String>
     <s:String x:Key="dialog.renameItem.exists">这个名字已经存在：{0}</s:String>
     <s:String x:Key="dialog.renameItem.invalid">名称里有不能用的字符。</s:String>
     <s:String x:Key="box.menu.removeSelected">从盒子移除选中项</s:String>

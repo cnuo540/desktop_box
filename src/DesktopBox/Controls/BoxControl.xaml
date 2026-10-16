@@ -13,6 +13,8 @@
         <BooleanToVisibilityConverter x:Key="BoolVis"/>
         <ctl:EnumEqualityToBoolConverter x:Key="ModeEqual"/>
     </UserControl.Resources>
+    <!-- 半透明底:盒子窗口是"顶层 + 非置顶 + 逐像素 alpha",所以这里的 alpha 是真的会生效、
+         真的透出壁纸的(见 BoxWindow 的说明)。子窗口时代它会被合成成不透明黑。 -->
     <Border x:Name="Card"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"

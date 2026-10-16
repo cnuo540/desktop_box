@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="{DynamicResource settings.title}"
-        Width="400" Height="400"
+        Width="400" Height="460"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanMinimize"
         Background="#FF1F1F1F"
@@ -10,6 +10,7 @@
         Loaded="OnLoaded">
     <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -37,8 +38,22 @@
             <RadioButton x:Name="LightRadio" GroupName="Theme" Content="{DynamicResource theme.light}" Foreground="White"/>
         </StackPanel>
 
-        <!-- 语言:auto / 简体中文 / English -->
+        <!-- 盒子背景不透明度:拖动即时生效并自动保存。只作用于背景色 —— 图标和文字始终清晰,调低就透出壁纸。
+             状态与持久化都归 MainViewModel(和托盘菜单里那个滑条读写同一个值),这里只是双向代理。 -->
         <StackPanel Grid.Row="4" Orientation="Horizontal" Margin="0,16,0,0">
+            <TextBlock Text="{DynamicResource menu.boxOpacity}" VerticalAlignment="Center"
+                       Foreground="White" Margin="0,0,12,0"/>
+            <Slider x:Name="OpacitySlider" Width="170"
+                    Minimum="0.1" Maximum="1.0"
+                    TickFrequency="0.1" SmallChange="0.05" LargeChange="0.1"
+                    VerticalAlignment="Center"
+                    Value="{Binding BoxOpacity, Mode=TwoWay}"/>
+            <TextBlock Text="{Binding BoxOpacityPercent}" VerticalAlignment="Center"
+                       Foreground="#FF9AA0A6" MinWidth="44" Margin="10,0,0,0"/>
+        </StackPanel>
+
+        <!-- 语言:auto / 简体中文 / English -->
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,16,0,0">
             <TextBlock Text="{DynamicResource settings.language}" VerticalAlignment="Center" Foreground="White" Margin="0,0,12,0"/>
             <ComboBox x:Name="LangCombo" SelectedIndex="{Binding LangIndex}"
                       MinWidth="170" Padding="6,4"
@@ -50,13 +65,17 @@
         </StackPanel>
 
         <!-- 卷起的盒子:鼠标悬停自动展开 -->
-        <CheckBox Grid.Row="5" Content="{DynamicResource settings.hoverExpand}"
+        <CheckBox Grid.Row="6" Content="{DynamicResource settings.hoverExpand}"
                   IsChecked="{Binding HoverExpandCollapsedBoxes}"
                   Margin="0,16,0,0" Foreground="White"/>
 
-        <TextBlock Grid.Row="7" Text="{DynamicResource settings.note}"
-                   Foreground="#FF9AA0A6" FontSize="11" Margin="0,0,0,8"/>
-        <Button Grid.Row="7" HorizontalAlignment="Right" VerticalAlignment="Bottom" Padding="10,4"
+        <StackPanel Grid.Row="8" VerticalAlignment="Top">
+            <TextBlock Text="{DynamicResource settings.note}"
+                       Foreground="#FF9AA0A6" FontSize="11" Margin="0,0,0,6"/>
+            <!-- 版本号取自程序集,跟着 csproj 的 <Version> 走,不在这里写死 -->
+            <TextBlock Text="{Binding VersionText}" Foreground="#FF6B7280" FontSize="11"/>
+        </StackPanel>
+        <Button Grid.Row="8" HorizontalAlignment="Right" VerticalAlignment="Bottom" Padding="10,4"
                 Click="OnOpenLogDir" Content="{DynamicResource settings.openLog}" Margin="0,24,0,0"/>
     </Grid>
 </Window>

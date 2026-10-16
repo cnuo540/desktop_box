@@ -148,9 +148,6 @@ public partial class MainWindow : Window
         menu.Items.Add(_localizer["menu.newBox"], null, (_, _) => _vm.AddBoxCommand.Execute(null));
         menu.Items.Add(_localizer["menu.addSysIcons"], null, (_, _) => _vm.AddSystemIconsBoxCommand.Execute(null));
         menu.Items.Add(_localizer["menu.organize"], null, (_, _) => OrganizeAndShowBoxes());
-        // 盒子背景不透明度:菜单里嵌一个滑条(拖动即时生效,松手即存盘)
-        menu.Items.Add(new Forms.ToolStripMenuItem(_localizer["menu.boxOpacity"]) { Enabled = false });
-        menu.Items.Add(new Forms.ToolStripControlHost(BuildOpacitySlider()));
         menu.Items.Add(_localizer["menu.toggleIcons"], null, (_, _) => _vm.ToggleDesktopIconsCommand.Execute(null));
         // explorer 自己那套"自动排列图标"在图标层关掉后是灰的(它按"看得到的图标"算),
         // 所以桌面上散落项的重新排列由我们自己提供入口。
@@ -302,7 +299,9 @@ public partial class MainWindow : Window
 
             try
             {
-                window.EnsureVisibleOnDesktopHost(host);
+                // 形参现在是"盒子该排在谁上面"(桌面层),不是父窗口 —— 两者都是普通档顶层窗口。
+                var above = _layerWindow is { IsHandleAlive: true } layer ? layer.Handle : IntPtr.Zero;
+                window.EnsureVisibleOnDesktopHost(above);
             }
             catch (Exception ex)
             {
@@ -377,6 +376,7 @@ public partial class MainWindow : Window
             EnsureBoxWindow(box);
 
         RepairBoxWindowsOnDesktopLayer();
+
         Services.LogService.Info("DesktopHost.Sync",
             $"boxes={_vm.Boxes.Count} windows={_boxWindows.Count} new={_boxWindows.Count - before} removed={removed}");
     }
@@ -460,26 +460,6 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>托盘菜单里的「盒子透明度」滑条。WinForms 菜单没有滑条控件,用 ToolStripControlHost
-    /// 把一个 TrackBar 嵌进菜单项:菜单不关闭、拖动即时改所有盒子的背景透明度。</summary>
-    private Forms.TrackBar BuildOpacitySlider()
-    {
-        var slider = new Forms.TrackBar
-        {
-            Minimum = 10,
-            Maximum = 100,
-            TickFrequency = 10,
-            SmallChange = 5,
-            LargeChange = 10,
-            Value = (int)Math.Round(Math.Clamp(_vm.BoxOpacity, 0.1, 1.0) * 100),
-            Width = 190,
-            Height = 32,
-            AutoSize = false
-        };
-        slider.Scroll += (_, _) => _vm.BoxOpacity = slider.Value / 100.0;
-        return slider;
-    }
-
     /// <summary>删掉光标所在盒子里选中的条目(移到回收站)。返回是否处理了。</summary>
     private bool DeleteBoxSelectionAt(int screenX, int screenY)
     {
@@ -561,6 +541,10 @@ public partial class MainWindow : Window
             _boxWindows[box.Id] = window;
             Services.LogService.Info("DesktopHost.Ensure",
                 $"已建窗 header={Services.LogService.Truncate(box.Header)} host=0x{host:X} {window.Describe()}");
+
+            // 盒子与桌面层都是普通档的顶层窗口 —— 把盒子排到桌面层之上,保证磁贴不会压在盒子上。
+            var above = _layerWindow is { IsHandleAlive: true } layer ? layer.Handle : IntPtr.Zero;
+            window.EnsureVisibleOnDesktopHost(above);
         }
         catch (Exception ex)
         {
