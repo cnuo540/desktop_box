@@ -4,6 +4,9 @@
 #define MyAppVersion GetFileVersion("publish-installer\DesktopBox.exe")
 
 [Setup]
+; 新的 AppId:老安装包没有写 AppId,Inno 用 AppName("DesktopBox")当 id,于是机器上可能留着
+; "为所有用户安装"的登记;同 id 的按用户安装会要求管理员才能升级。换新 GUID 让两者互不干扰。
+AppId={{5E7A9C31-4D82-4F1B-9A63-2C8F1E0B7D54}
 AppName=DesktopBox
 AppVersion={#MyAppVersion}
 AppVerName=DesktopBox {#MyAppVersion}
@@ -21,16 +24,14 @@ SolidCompression=yes
 LZMAUseSeparateProcess=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; 安装包自己请求管理员权限:双击 → 一次 UAC → 直接装完,不用再右键"以管理员身份运行"。
-; 之前是 PrivilegesRequired=lowest(纯当前用户、完全不提权),但用户机器上常留有老版本
-; "为所有用户安装"的登记(HKLM),清理它需要管理员,于是表现为"必须右键以管理员身份运行才能装"。
-;
-; 注意:DefaultDirName 仍然放在 {localappdata}(提权后仍是同一个用户的目录),
-; 这样① 用户数据(boxes.json / desktop-layer.json / logs / icons)原地保留不丢;
-;      ② 程序运行期照旧以普通权限写自己的目录,不需要管理员。
-; PrivilegesRequiredOverridesAllowed=commandline:不弹"安装模式"选择框(/CURRENTUSER 仍可用),
-; 保证默认流程就是"双击 → UAC → 装完"。
-PrivilegesRequired=admin
+; 权限:**不提权**(双击直接装,连 UAC 都不弹)。
+; 曾经改成 PrivilegesRequired=admin(自动提权)是为了清理老版本"为所有用户安装"的登记(HKLM),
+; 但实测在提权上下文里 Inno 建自己的临时目录会被拒(Error 5,拒绝访问;普通权限下同一目录可写,
+; ACL 也没有拒绝项 —— 指向第三方安全软件拦截未签名的提权安装程序)。而不提权的安装在用户机器上
+; 一直是成功的,所以回到 lowest,并换一个全新的 AppId 来避开"所有用户"旧登记触发的升级冲突。
+; 代价:程序与功能里会残留一条旧的 DesktopBox 记录(指向同一个 unins000.exe),可手动删:
+;   管理员 PowerShell: reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\DesktopBox_is1" /f
+PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=commandline
 WizardStyle=modern
 CompressionThreads=auto
@@ -59,7 +60,7 @@ Name: "{group}\Uninstall DesktopBox"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\DesktopBox"; Filename: "{app}\DesktopBox.exe"; Tasks: desktopicon
 
 [Run]
-; runasoriginaluser:安装包是提权运行的,直接启动会把主程序也带成管理员进程 ——
-; 那样它的桌面层/盒子窗口与 explorer 的交互、以及它自己目录的读写都会带上管理员上下文,
-; 所以必须用"原用户"身份启动(未提权的那份令牌)。
-Filename: "{app}\DesktopBox.exe"; Description: "Launch DesktopBox"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; 当前是"不提权"安装,这里直接启动即可。
+; (若将来改回 PrivilegesRequired=admin,这里必须加 runasoriginaluser —— 否则被自动启动的主程序
+;  会继承管理员令牌,它的桌面层/盒子窗口与 explorer 的交互就全乱了。)
+Filename: "{app}\DesktopBox.exe"; Description: "Launch DesktopBox"; Flags: nowait postinstall skipifsilent
