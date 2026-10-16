@@ -1,0 +1,9 @@
+#include <windows.h>
+
+IDI_ICON1 ICON "..\\DesktopBox\\Resources\\DesktopBox.ico"
+101 RCDATA "release\\DesktopBoxSetupCore.exe"
+1 24 "bootstrapper.manifest"
+
+; 版本资源由构建脚本按 csproj 的 <Version> 生成到 _testtmp(rc 用 /i 把该目录加入搜索路径)。
+; 有了它,UAC 提示里的"程序名称"会显示 DesktopBox Setup 而不是裸文件名。
+#include "bootstrapper_version.rc"

@@ -97,9 +97,55 @@ $helper = Join-Path $repoRoot 'publish/DesktopBox.ShellMenu.exe'
 if (-not (Test-Path $helper)) { throw "missing $helper" }
 Copy-Item $helper (Join-Path $repoRoot 'publish-installer/DesktopBox.ShellMenu.exe') -Force
 
-Write-Host "`n==> [3/3] ISCC DesktopBox.iss..." -ForegroundColor Green
+Write-Host "`n==> [3/4] ISCC DesktopBox.iss (core installer)..." -ForegroundColor Green
 & $iscc (Join-Path $repoRoot 'DesktopBox.iss')
 if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+
+Write-Host "`n==> [4/4] build elevated UAC bootstrapper..." -ForegroundColor Green
+# The outer DesktopBoxSetup.exe carries a requireAdministrator manifest and embeds the core
+# installer as RCDATA: Windows raises UAC first, then the core runs already elevated - which is
+# what Inno's own bootstrap cannot do (it creates %TEMP%\is-*.tmp before elevating, and that step
+# is denied on machines where an elevated, unsigned installer is blocked from writing there).
+$versionForBootstrapper = (Get-Item $exe).VersionInfo.FileVersion
+if (-not $versionForBootstrapper) { $versionForBootstrapper = (Get-Item $exe).VersionInfo.ProductVersion }
+$parts = @($versionForBootstrapper.Split('.') + @('0', '0', '0', '0'))[0..3]
+$versionRc = @"
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION $($parts -join ',')
+ PRODUCTVERSION $($parts -join ',')
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "CompanyName", "DesktopBox\0"
+      VALUE "FileDescription", "DesktopBox Setup\0"
+      VALUE "FileVersion", "$versionForBootstrapper\0"
+      VALUE "InternalName", "DesktopBoxSetup\0"
+      VALUE "OriginalFilename", "DesktopBoxSetup.exe\0"
+      VALUE "ProductName", "DesktopBox\0"
+      VALUE "ProductVersion", "$versionForBootstrapper\0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
+"@
+New-Item -ItemType Directory -Force -Path (Join-Path $repoRoot '_testtmp') | Out-Null
+# Write without a BOM (rc.exe trips on one) and with a trailing newline (otherwise rc fails with
+# "unexpected end of file" on the last line).
+[System.IO.File]::WriteAllText((Join-Path $repoRoot '_testtmp\bootstrapper_version.rc'),
+    $versionRc + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+
+& cmd /c (Join-Path $repoRoot 'scripts\build-bootstrapper.bat')
+if ($LASTEXITCODE -ne 0) { throw 'UAC bootstrapper build failed' }
 
 $setup = Join-Path $repoRoot 'release\DesktopBoxSetup.exe'
 if (-not (Test-Path $setup)) { throw "missing $setup" }

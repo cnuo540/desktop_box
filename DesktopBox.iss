@@ -18,20 +18,20 @@ DisableDirPage=yes
 SetupIconFile=src\DesktopBox\Resources\DesktopBox.ico
 UninstallDisplayIcon={app}\DesktopBox.exe
 OutputDir=release
-OutputBaseFilename=DesktopBoxSetup
+OutputBaseFilename=DesktopBoxSetupCore
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; 权限:**不提权**(双击直接装,连 UAC 都不弹)。
-; 曾经改成 PrivilegesRequired=admin(自动提权)是为了清理老版本"为所有用户安装"的登记(HKLM),
-; 但实测在提权上下文里 Inno 建自己的临时目录会被拒(Error 5,拒绝访问;普通权限下同一目录可写,
-; ACL 也没有拒绝项 —— 指向第三方安全软件拦截未签名的提权安装程序)。而不提权的安装在用户机器上
-; 一直是成功的,所以回到 lowest,并换一个全新的 AppId 来避开"所有用户"旧登记触发的升级冲突。
-; 代价:程序与功能里会残留一条旧的 DesktopBox 记录(指向同一个 unins000.exe),可手动删:
-;   管理员 PowerShell: reg delete "HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\DesktopBox_is1" /f
-PrivilegesRequired=lowest
+; 权限:核心包由外层 DesktopBoxSetup.exe(带 requireAdministrator 清单的启动器)启动,
+; 所以它**一定运行在已提权上下文**里;Inno 自己不必再自我提权,临时目录也能正常创建。
+; 之所以不能让 Inno 自己提权:老版本实测 Inno 的启动器会在"提权之前"就先去 %TEMP% 建 is-*.tmp,
+; 那一步被系统拒绝(Error 5),双击安装直接失败;而右键以管理员身份运行则正常 —— 说明缺的正是
+; "进入提权上下文之后再写临时目录"。外层启动器解决的就是这个次序问题。
+; 安装模式设为 admin,是为了让下面的 runasoriginaluser 生效(否则装完自动启动的主程序会继承
+; 管理员令牌,它的桌面层/盒子窗口与 explorer 的交互会全乱)。
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=commandline
 WizardStyle=modern
 CompressionThreads=auto
@@ -60,7 +60,6 @@ Name: "{group}\Uninstall DesktopBox"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\DesktopBox"; Filename: "{app}\DesktopBox.exe"; Tasks: desktopicon
 
 [Run]
-; 当前是"不提权"安装,这里直接启动即可。
-; (若将来改回 PrivilegesRequired=admin,这里必须加 runasoriginaluser —— 否则被自动启动的主程序
-;  会继承管理员令牌,它的桌面层/盒子窗口与 explorer 的交互就全乱了。)
-Filename: "{app}\DesktopBox.exe"; Description: "Launch DesktopBox"; Flags: nowait postinstall skipifsilent
+; 核心包是在提权上下文里跑的,直接启动会把主程序也带成管理员进程 ——
+; runasoriginaluser 让它用"原用户"(未提权)身份启动,桌面层/盒子窗口与 explorer 的交互才正常。
+Filename: "{app}\DesktopBox.exe"; Description: "Launch DesktopBox"; Flags: nowait postinstall skipifsilent runasoriginaluser

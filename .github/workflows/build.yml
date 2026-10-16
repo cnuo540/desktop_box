@@ -69,9 +69,13 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path publish/DesktopBox.exe,publish/DesktopBox.ShellMenu.exe -DestinationPath DesktopBox.zip
 
-      - name: Build installer
+      # 先编译 Inno 核心安装包(DesktopBoxSetupCore.exe),再用带 requireAdministrator 清单的
+      # 外层启动器把它包成 release/DesktopBoxSetup.exe —— 双击时由 Windows 先弹 UAC,
+      # 核心包在已提权上下文里再创建自己的 %TEMP%\is-*.tmp(顺序反了就会 Error 5)。
+      # -SkipPublish:复用上面两步已经发布好的 publish / publish-installer,不重复发布。
+      - name: Build installer (core + elevated bootstrapper)
         shell: pwsh
-        run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" DesktopBox.iss'
+        run: ./scripts/build-installer.ps1 -SkipPublish
 
       # 每次构建都上传 artifact(非 tag 时供下载测试,7 天过期)
       - name: Upload artifact
