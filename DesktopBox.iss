@@ -1,7 +1,7 @@
 ; DesktopBox Inno Setup 安装脚本
 ; 用法:用 ISCC.exe 编译本文件,生成 release\DesktopBoxSetup.exe
 
-#define MyAppVersion GetFileVersion("publish\DesktopBox.exe")
+#define MyAppVersion GetFileVersion("publish-installer\DesktopBox.exe")
 
 [Setup]
 AppName=DesktopBox
@@ -34,11 +34,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"
 
 [Files]
-Source: "publish\DesktopBox.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\DesktopBox.ShellMenu.exe"; DestDir: "{app}"; Flags: ignoreversion
+; 多文件自包含:启动不必把单文件包解压到 %TEMP%\.net(首次启动慢、被清理工具清了还要再付一次),
+; 仍然免 .NET。单文件绿色版由 release.ps1 单独打成 zip。
+Source: "publish-installer\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
 Type: files; Name: "{app}\DesktopBox.ShellMenu.dll"
+
+; 卸载时不做额外删除:Inno 会清掉自己装过的文件,而 boxes.json / desktop-layer.json / logs / icons
+; 是用户数据,必须留下(安装目录在 %LocalAppData%,不归卸载程序管)。
 
 [Icons]
 Name: "{group}\DesktopBox"; Filename: "{app}\DesktopBox.exe"

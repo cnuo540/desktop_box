@@ -16,7 +16,9 @@ public class ReleaseConsistencyTests
         source.Should().Contain("{#MyAppVersion}");
         source.Should().NotContain("AppVersion=1.7.0");
         source.Should().NotContain("AppVerName=DesktopBox 1.7.0");
-        source.Should().Contain("publish\\DesktopBox.ShellMenu.exe");
+        // 安装包放的是"多文件自包含"整目录(启动不必解压到 %TEMP%),helper 也在里面
+        source.Should().Contain("GetFileVersion(\"publish-installer\\DesktopBox.exe\")");
+        source.Should().Contain("publish-installer\\*");
         source.Should().Contain("[InstallDelete]");
         source.Should().Contain("Name: \"{app}\\DesktopBox.ShellMenu.dll\"");
     }

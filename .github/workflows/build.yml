@@ -49,6 +49,21 @@ jobs:
         shell: cmd
         run: src\DesktopBox.ShellMenu\build_dll.bat
 
+      # 安装包用**多文件自包含**:启动不必把单文件包解压到 %TEMP%\.net(首次启动慢、
+      # 被清理工具清了还要再付一次),同时仍然免 .NET。绿色版 zip 继续用上面的单文件产物。
+      - name: Publish for installer (multi-file self-contained)
+        run: >
+          dotnet publish src/DesktopBox/DesktopBox.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false
+          -p:IncludeNativeLibrariesForSelfExtract=false
+          -p:EnableCompressionInSingleFile=false
+          -o publish-installer
+
+      - name: Copy ShellMenu helper next to the installer payload
+        shell: pwsh
+        run: Copy-Item publish/DesktopBox.ShellMenu.exe publish-installer/DesktopBox.ShellMenu.exe -Force
+
       # 打包单文件主程序 + ShellMenu helper,解压即用
       - name: Package zip
         shell: pwsh

@@ -60,26 +60,33 @@ Get-Process -Name DesktopBox -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 800
 
 if (-not $SkipPublish) {
-    Write-Host "`n==> [1/3] dotnet publish (single-file, self-contained)..." -ForegroundColor Green
+    Write-Host "`n==> [1/3] dotnet publish (multi-file, self-contained -> publish-installer)..." -ForegroundColor Green
+    # The installer ships a MULTI-FILE self-contained build: no first-run extraction of the
+    # single-file bundle into %TEMP%\.net (slow first start, paid again after temp cleanup),
+    # and still needs no .NET runtime. The single-file green build stays in release.ps1 (zip).
+    #
+    # Wipe the output dir first: dotnet publish leaves stale files behind, and the .iss ships
+    # "publish-installer\*" - leftovers (even a boxes.json from a smoke test) would be packaged.
+    $payloadDir = Join-Path $repoRoot 'publish-installer'
+    if (Test-Path $payloadDir) { Remove-Item $payloadDir -Recurse -Force }
     $publishArgs = @(
         'publish', 'src/DesktopBox/DesktopBox.csproj',
         '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true',
-        '-p:PublishSingleFile=true',
-        '-p:IncludeNativeLibrariesForSelfExtract=true',
-        '-p:EnableCompressionInSingleFile=true',
-        '-o', 'publish', '--nologo'
+        '-p:PublishSingleFile=false',
+        '-p:IncludeNativeLibrariesForSelfExtract=false',
+        '-p:EnableCompressionInSingleFile=false',
+        '-o', 'publish-installer', '--nologo'
     )
     & $dotnet @publishArgs
     if ($LASTEXITCODE -ne 0) {
-        # Machines with a broken NuGet configuration can still publish from the existing
-        # obj\ assets - retry without restoring instead of failing the whole build.
+        # Some machines have a broken NuGet environment - fall back to the existing obj assets.
         Write-Host "    publish failed, retrying with --no-restore..." -ForegroundColor Yellow
         & $dotnet @publishArgs '--no-restore'
         if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
     }
 }
 
-$exe = Join-Path $repoRoot 'publish/DesktopBox.exe'
+$exe = Join-Path $repoRoot 'publish-installer/DesktopBox.exe'
 if (-not (Test-Path $exe)) { throw "missing $exe" }
 
 Write-Host "`n==> [2/3] build native ShellMenu helper..." -ForegroundColor Green
@@ -88,6 +95,7 @@ if ($LASTEXITCODE -ne 0) { throw 'ShellMenu helper build failed' }
 
 $helper = Join-Path $repoRoot 'publish/DesktopBox.ShellMenu.exe'
 if (-not (Test-Path $helper)) { throw "missing $helper" }
+Copy-Item $helper (Join-Path $repoRoot 'publish-installer/DesktopBox.ShellMenu.exe') -Force
 
 Write-Host "`n==> [3/3] ISCC DesktopBox.iss..." -ForegroundColor Green
 & $iscc (Join-Path $repoRoot 'DesktopBox.iss')
@@ -98,5 +106,7 @@ if (-not (Test-Path $setup)) { throw "missing $setup" }
 
 $version = (Get-Item $exe).VersionInfo.FileVersion
 $size = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+$payload = (Get-ChildItem (Join-Path $repoRoot 'publish-installer') -Recurse -File |
+        Measure-Object -Property Length -Sum).Sum
 Write-Host "`n==> installer ready: $setup (v$version, $size MB)" -ForegroundColor Cyan
-Write-Host "    main exe: $([math]::Round((Get-Item $exe).Length / 1MB, 1)) MB, helper: $helper" -ForegroundColor DarkGray
+Write-Host "    payload: $([math]::Round($payload / 1MB, 1)) MB multi-file self-contained (no %TEMP% extraction)" -ForegroundColor DarkGray
