@@ -16,6 +16,16 @@ public partial class BoxItem : ObservableObject
 
     [ObservableProperty] private string? _iconCachePath;
 
+    /// <summary>磁贴有没有真实图标可画。
+    ///
+    /// 必须是可观察的绑定源:v1.7.36 之前 ItemTile 用命令式 <c>Img.Visibility = ...</c> 只在
+    /// DataContext 变化时算一次,而 IconCachePath 是后台异步填的 —— 一键整理批量加条目时磁贴先建、
+    /// 图标后到,Visibility 永远停在 Collapsed(现象:整理完一片字母占位,切一次标签才正常)。
+    /// 改成绑定后由 IconCachePath 驱动,到达即显示。</summary>
+    public bool HasIcon => !string.IsNullOrEmpty(IconCachePath);
+
+    partial void OnIconCachePathChanged(string? value) => OnPropertyChanged(nameof(HasIcon));
+
     /// <summary>是否被选中(单选/Ctrl多选)。选中时磁贴显示半透明蓝色高亮(资源管理器风格)。</summary>
     [ObservableProperty] private bool _isSelected;
 

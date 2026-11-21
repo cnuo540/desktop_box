@@ -19,7 +19,9 @@ public class DesktopScannerService : IDesktopScannerService
             {
                 foreach (var entry in Directory.EnumerateFileSystemEntries(d))
                 {
-                    if (Path.GetFileName(entry).Equals("desktop.ini", StringComparison.OrdinalIgnoreCase)) continue;
+                    // 过滤集中在 DesktopItemPolicy:临时文件(~$、*.tmp)与资源管理器不显示的隐藏文件
+                    // 既不画在桌面层、也不收进盒子 —— 否则会留下一堆"目标当前不可用"的死引用。
+                    if (!DesktopItemPolicy.ShouldShow(entry)) continue;
                     result.Add(entry);
                 }
             }

@@ -12,6 +12,10 @@ public class AppSettings
     /// <summary>卷起的盒子在鼠标悬停时自动展开、移开自动收起。默认开启。</summary>
     public bool HoverExpandCollapsedBoxes { get; set; } = true;
 
+    /// <summary>桌面上新出现的文件自动收纳进「桌面整理」盒子。默认开启。
+    /// 实际生效还要求"桌面图标隐藏"(由我们的桌面层管桌面),详见 MainViewModel.TryAutoCollect。</summary>
+    public bool AutoCollectNewDesktopFiles { get; set; } = true;
+
     /// <summary>盒子背景的不透明度(0.3~1.0,默认 1 = 原来那样)。
     /// 只影响背景色:图标和文字始终清晰,调低就透出桌面/壁纸。</summary>
     public double BoxOpacity { get; set; } = 1.0;

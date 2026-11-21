@@ -451,7 +451,8 @@ public sealed class DesktopLayerWindow : IDisposable
         {
             if (e.ClickCount >= 2)
             {
-                Open(path);
+                // 打开成功就清掉选中(和盒子里的磁贴一致:启动完还留着高亮没有意义)
+                if (Open(path)) ClearSelection();
                 e.Handled = true;
                 return;
             }
@@ -830,15 +831,18 @@ public sealed class DesktopLayerWindow : IDisposable
         return name;
     }
 
-    private static void Open(string path)
+    /// <summary>启动一个桌面项。返回是否真的启动成功(失败只写日志,调用方据此决定要不要清选中)。</summary>
+    private static bool Open(string path)
     {
         try
         {
             Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            return true;
         }
         catch (Exception ex)
         {
             Services.LogService.Warn("DesktopLayer.Open", Services.LogService.Truncate(ex.Message, 160));
+            return false;
         }
     }
 
@@ -1113,11 +1117,13 @@ public sealed class DesktopLayerWindow : IDisposable
             ? _selectedPaths.ToList()
             : new List<string> { path };
 
-        var data = new DataObject();
-        data.SetData(DataFormats.FileDrop, dragged.ToArray());
-
         var boxBounds = Controls.DesktopDropOverlay.OccupiedBoxRects(_vm.Boxes);
         using var desktopDrop = Controls.DesktopDropOverlay.TryCreate(boxBounds);
+
+        // 覆盖层就位才带原生 FileDrop:它既让拖给微信/资源管理器能被识别(v1.7.37),
+        // 又保证"拖到桌面"的落点归我们 —— 覆盖层没建成时带上,explorer 会自己复制并弹同名错误。
+        var data = new DataObject();
+        if (desktopDrop is not null) data.SetData(DataFormats.FileDrop, dragged.ToArray());
         var droppedOnDesktop = false;
         (double X, double Y)? dropPoint = null;
         try

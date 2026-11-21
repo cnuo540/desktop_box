@@ -30,6 +30,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool _attributeHidingRestored;
     private readonly ILocalizerService _localizer;
     private readonly IShellChangeNotifierService _shellChange;
+    /// <summary>刚从盒子拖到桌面的路径 → 拖出时刻。窗口期内不自动收纳(见 TryAutoCollect 说明④)。</summary>
+    private readonly Dictionary<string, long> _recentEjected = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _ejectedGate = new();
+    /// <summary>拖出排除窗口:比 GlobalDragTracker 的 1.5 秒宽,兜住"松手后才开始落盘的大文件复制"。</summary>
+    private const long EjectExcludeMs = 60_000;
     private Timer? _debounce;
     private bool _disposed;
     private readonly object _systemIconRefreshGate = new();
@@ -65,6 +70,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _hoverExpandCollapsedBoxes = true;
 
     partial void OnHoverExpandCollapsedBoxesChanged(bool value) => ScheduleSave();
+
+    /// <summary>桌面上新出现的文件自动收纳进「桌面整理」盒子(设置项,持久化)。
+    /// 只在"桌面图标隐藏、由我们的桌面层管桌面"时生效 —— 图标可见时用户用的是原生桌面,
+    /// 此时收纳会造成"桌面和盒子各显示一次"。开关只决定要不要做,不改变这个前置条件。</summary>
+    [ObservableProperty] private bool _autoCollectNewDesktopFiles = true;
+
+    partial void OnAutoCollectNewDesktopFilesChanged(bool value) => ScheduleSave();
 
     /// <summary>盒子背景的不透明度(设置项,持久化)。只作用于背景色 —— 图标和文字不跟着变淡。</summary>
     [ObservableProperty] private double _boxOpacity = 1.0;
@@ -114,8 +126,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _localizer.LanguageChanged += OnLanguageChanged;
         // 系统图标自动刷新:回收站清空/还原、此电脑盘符变化等 shell 通知 → 重新提取受影响图标
         _shellChange.SystemIconChanged += OnSystemIconChanged;
-        // 桌面上新出现的文件要立刻可见(explorer 自己不会画外部新建的桌面文件)
-        if (_desktopWatcher is not null) _desktopWatcher.DesktopItemAppeared += OnDesktopItemAppeared;
+        // 桌面上新出现的文件要立刻可见(explorer 自己不会画外部新建的桌面文件);
+        // 同时按类型分流:新增→尝试自动收纳、删除→撤引用、改名→引用跟着改。
+        if (_desktopWatcher is not null) _desktopWatcher.DesktopItemChanged += OnDesktopItemChanged;
     }
 
     private void OnLanguageChanged(object? sender, EventArgs e) => RefreshAllHeaders();
@@ -129,6 +142,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var cfg = _store.Load();
         GlobalViewMode = cfg.Settings.GlobalViewMode;
         HoverExpandCollapsedBoxes = cfg.Settings.HoverExpandCollapsedBoxes;
+        AutoCollectNewDesktopFiles = cfg.Settings.AutoCollectNewDesktopFiles;
         BoxOpacity = Math.Clamp(cfg.Settings.BoxOpacity, 0.1, 1.0);
 
         // 迁移系统图标 item 的旧 CLSID → SystemIcons.cs 当前定义。
@@ -184,6 +198,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // 图标缓存可能丢失(icons 目录被删/exe 被搬到别的路径):后台重提。
         // Extract 内部有 File.Exists 检查,命中则跳过、缺失则重建。
         if (all.Count > 0) ExtractIconsInBackground(all);
+
+        // 存量残留清理:旧版本把 Office 的 ~$ 锁文件等临时文件也收进了盒子(v1.7.37 起扫描已过滤),
+        // 这里把已经收进去的清掉。普通文件的失效引用仍按设计保留、由手动「刷新失效图标」处理。
+        var pruned = CleanupStaleDesktopReferences();
+        if (pruned > 0)
+        {
+            Services.LogService.Info("Desktop.Cleanup", $"启动清理临时文件引用 {pruned} 条");
+            ScheduleSave();
+        }
     }
 
     [RelayCommand]
@@ -363,27 +386,39 @@ public partial class MainViewModel : ObservableObject, IDisposable
     // ---- 选中态 + 批量操作(跨盒子):所有 BoxItem.IsSelected 汇总 ----
 
     /// <summary>把一批路径移到回收站(等同 explorer 里按 Delete),并把盒子里指向它们的条目一并撤掉。
-    /// 返回真正删掉的数量。**进回收站、可还原**,不做永久删除。</summary>
+    /// 返回真正处理掉的数量。**进回收站、可还原**,不做永久删除。
+    ///
+    /// v1.7.37 两处修正(现象都是"按 Delete 没反应"):
+    /// ① 失败原因以前只写日志、界面无反馈(文件被 Excel 占着时就是静默失败)→ 现在用提示条说明;
+    /// ② 目标全都不存在时以前直接 return 0、连日志都没有 → 现在按"处理成功"清掉引用并提示。</summary>
     public int MoveToRecycleBin(IEnumerable<string>? paths)
     {
-        var targets = (paths ?? Enumerable.Empty<string>())
+        var requested = (paths ?? Enumerable.Empty<string>())
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Where(p => !p.StartsWith("::", StringComparison.Ordinal))
             .Where(p => !p.StartsWith("http", StringComparison.OrdinalIgnoreCase))
-            .Where(p => File.Exists(p) || Directory.Exists(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (targets.Count == 0) return 0;
+        if (requested.Count == 0) return 0;
 
-        if (!Shell32.MoveToRecycleBin(targets, IntPtr.Zero))
+        var existing = requested.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
+        var missing = requested.Count - existing.Count;
+
+        if (existing.Count > 0)
         {
-            Services.LogService.Warn("Item.Delete", $"移到回收站失败: {targets.Count} 项");
-            return 0;
+            var rc = Shell32.MoveToRecycleBin(existing, IntPtr.Zero);
+            if (rc != 0)
+            {
+                Services.LogService.Warn("Item.Delete", $"移到回收站失败 rc={rc}: {existing.Count} 项");
+                ToastWindow.Show(string.Format(_localizer[Shell32.DescribeDeleteFailure(rc)], rc), opacity: 0.9);
+                return 0;   // 文件还在,引用也保留
+            }
+
+            Services.LogService.Info("Item.Delete", $"已移到回收站 {existing.Count} 项");
         }
 
-        Services.LogService.Info("Item.Delete", $"已移到回收站 {targets.Count} 项");
-
-        foreach (var path in targets)
+        // 引用清理:真删掉的 + 本来就不存在的,都从盒子里撤掉(否则留下"目标当前不可用"的死引用)
+        foreach (var path in requested)
         {
             var stale = AllItems()
                 .Where(i => string.Equals(i.TargetPath, path, StringComparison.OrdinalIgnoreCase))
@@ -393,7 +428,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         RaiseLooseItemsChanged();
         ScheduleSave();
-        return targets.Count;
+
+        // 一个都没真删掉(文件早没了)也要说一声,否则用户仍觉得"按了没反应"
+        if (existing.Count == 0 && missing > 0)
+            ToastWindow.Show(_localizer["dialog.delete.alreadyGone"], opacity: 0.9);
+
+        return requested.Count;
     }
 
     /// <summary>按条目 Id 找条目(跨盒子/跨标签)。盒内拖拽重排时用它认出"拖的是哪一条"。</summary>
@@ -557,15 +597,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private void Organize()
     {
         // 找整理盒子:manifest 指向 → 失效则回退找现有「桌面整理」标签盒子 → 都没有才新建。
-        // 回退查找可防止 manifest 丢失/损坏时重复建盒子。
-        Guid? knownId = _organize.GetOrganizeBoxId();
-        var box = knownId.HasValue ? Boxes.FirstOrDefault(b => b.Id == knownId.Value) : null;
-        box ??= Boxes.FirstOrDefault(b => b.Key == "box.organize");
-        bool firstTime = box is null;
-
-        if (box is null)
-            AddBoxSynced(box = new BoxViewModel(new Box { Key = "box.organize", Name = _localizer["box.organize"], Width = 300, Height = 380, X = 40, Y = 40 }));
-        _organize.RecordBoxIds(new[] { box.Id });   // 始终刷新,确保 manifest 指向当前整理盒子
+        // 回退查找可防止 manifest 丢失/损坏时重复建盒子。(一键整理与自动收纳共用)
+        var box = GetOrCreateOrganizeBox(out bool firstTime);
 
         // 去重:整理盒子历史可能存在同一文件的重复条目(旧版整理逻辑/多次手动拖入),
         // 导致移除一条后该文件仍"存在"于盒子另一标签,整理时无法重新收录("移除后只回来部分")。
@@ -639,9 +672,60 @@ public partial class MainViewModel : ObservableObject, IDisposable
         ToastWindow.Show(msg);
     }
 
-    /// <summary>新建分类标签并加入盒子。catKey 是分类稳定 key(cat.xxx);Name 用当前语言翻译作可读备份。</summary>
-    private BoxTab NewTab(BoxViewModel box, string catKey)
+    /// <summary>找到(或新建)「桌面整理」盒子,并把 manifest 指向它。一键整理与自动收纳共用。
+    /// <paramref name="created"/> = 本次是新建的(一键整理要用它决定提示语)。</summary>
+    private BoxViewModel GetOrCreateOrganizeBox(out bool created)
     {
+        Guid? knownId = _organize.GetOrganizeBoxId();
+        BoxViewModel? found = knownId.HasValue ? Boxes.FirstOrDefault(b => b.Id == knownId.Value) : null;
+        found ??= Boxes.FirstOrDefault(b => b.Key == "box.organize");
+
+        created = found is null;
+        var box = found ?? new BoxViewModel(new Box
+        {
+            Key = "box.organize",
+            Name = _localizer["box.organize"],
+            Width = 300, Height = 380, X = 40, Y = 40
+        });
+        if (created) AddBoxSynced(box);
+
+        _organize.RecordBoxIds(new[] { box.Id });   // 始终刷新,确保 manifest 指向当前整理盒子
+        return box;
+    }
+
+    /// <summary>启动时清掉<b>临时文件</b>的引用(~$ 锁文件、*.tmp)。
+    ///
+    /// 只清这一类,不清"文件已消失"的普通引用 —— 后者是设计如此:引用保留、由用户用右键
+    /// 「刷新失效图标」决定要不要清(见使用说明)。临时文件则不同:它们根本不该被收进来
+    /// (v1.7.37 起 ScanDesktop 已过滤),留着的都是旧版本收进来的残留,清掉才对。
+    /// 仍然只碰桌面路径,网络盘/其它目录的引用一律不动。</summary>
+    private int CleanupStaleDesktopReferences()
+    {
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
+        // 桌面目录本身都不可用(盘被拔/未就绪)时一个都不清:宁可留着,不能误删
+        if (!Directory.Exists(desktop) && !Directory.Exists(common)) return 0;
+
+        var stale = AllItems().Where(IsTransientDesktopReference).ToList();
+        foreach (var item in stale) RemoveItemAnywhere(item);
+        return stale.Count;
+    }
+
+    private static bool IsTransientDesktopReference(BoxItem item)
+    {
+        if (item.Type is ItemType.SystemIcon or ItemType.Url) return false;
+
+        var path = item.TargetPath;
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (path.StartsWith("::", StringComparison.Ordinal)) return false;
+        if (path.StartsWith("http", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!DesktopIconLayoutService.IsDesktopItem(path)) return false;   // 只管桌面路径
+
+        return DesktopItemPolicy.IsTransientName(Path.GetFileName(path));
+    }
+
+    /// <summary>新建分类标签并加入盒子。catKey 是分类稳定 key(cat.xxx);Name 用当前语言翻译作可读备份。</summary>
+    private BoxTab NewTab(BoxViewModel box, string catKey)    {
         var tab = new BoxTab { Key = catKey, Name = _localizer[catKey] };
         box.Tabs.Add(tab);
         return tab;
@@ -1006,7 +1090,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 if (item is null) continue;
                 var source = item.TargetPath;
                 RemoveItemAnywhere(item);          // 先出盒:之后它就不在"已收纳"名单里了
-                PlaceOnDesktopIfMissing(source);   // 落下效果是 Copy:不在桌面的文件复制过去
+                var landed = PlaceOnDesktopIfMissing(source);   // 落下效果是 Copy:不在桌面的文件复制过去
+                // 记下"这是刚拖出盒的":落盘可能晚于拖动结束,靠 GlobalDragTracker 的 1.5 秒窗口兜不住
+                MarkEjectedToDesktop(landed);
             }
 
             RaiseLooseItemsChanged();
@@ -1116,32 +1202,159 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>桌面目录里冒出了新项(拖进来、别的程序新建)。监听在后台线程,这里转回 UI 线程。</summary>
-    private void OnDesktopItemAppeared(object? sender, string path)
+    /// <summary>桌面目录发生变化(监听在后台线程),转回 UI 线程处理。</summary>
+    private void OnDesktopItemChanged(object? sender, DesktopItemChange change)
     {
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher is null || dispatcher.CheckAccess())
         {
-            HandleDesktopItemAppeared(path);
+            HandleDesktopItemChanged(change);
             return;
         }
-        dispatcher.BeginInvoke(new Action(() => HandleDesktopItemAppeared(path)));
+        dispatcher.BeginInvoke(new Action(() => HandleDesktopItemChanged(change)));
     }
 
-    /// <summary>桌面目录一变(新增/删除/改名)就让桌面层重画:未收纳的项会被画出来,
-    /// 已收纳的项不画(它们只在盒子里出现)。</summary>
-    private void HandleDesktopItemAppeared(string path)
+    /// <summary>桌面目录一变就按类型分流:
+    /// <b>新增</b> → 尝试自动收纳(没收才画在桌面层);<b>删除</b> → 撤掉盒子里的引用(否则点开就是"目标当前不可用");
+    /// <b>改名</b> → 引用跟着改到新路径(同理)。三种都要重画桌面层。</summary>
+    private void HandleDesktopItemChanged(DesktopItemChange change)
     {
-        if (_disposed || string.IsNullOrWhiteSpace(path)) return;
+        if (_disposed || string.IsNullOrWhiteSpace(change.Path)) return;
         try
         {
-            Services.LogService.Info("Desktop.Watch", $"changed path={path}");
-            RaiseLooseItemsChanged();
+            Services.LogService.Info("Desktop.Watch", $"{change.Kind} path={change.Path}");
+
+            switch (change.Kind)
+            {
+                case DesktopChangeKind.Created:
+                    // 收纳成功时自己会重画;没收成才单纯重画(把新文件画到桌面层上)
+                    if (!TryAutoCollect(change.Path)) RaiseLooseItemsChanged();
+                    break;
+
+                case DesktopChangeKind.Deleted:
+                    RemoveReferencesTo(change.Path);
+                    RaiseLooseItemsChanged();
+                    break;
+
+                case DesktopChangeKind.Renamed:
+                    if (!string.IsNullOrEmpty(change.OldPath))
+                        UpdateReferencePath(change.OldPath, change.Path);
+                    RaiseLooseItemsChanged();
+                    break;
+            }
         }
         catch (Exception ex)
         {
-            App.LogError(ex, "MainViewModel.HandleDesktopItemAppeared");
+            App.LogError(ex, "MainViewModel.HandleDesktopItemChanged");
         }
+    }
+
+    /// <summary>把指向某路径的盒内引用全部撤掉(文件已删/已移出桌面)。只撤引用,绝不碰文件本身。</summary>
+    private int RemoveReferencesTo(string path)
+    {
+        var stale = AllItems()
+            .Where(i => string.Equals(i.TargetPath, path, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (stale.Count == 0) return 0;
+
+        foreach (var item in stale) RemoveItemAnywhere(item);
+        Services.LogService.Info("Desktop.Watch", $"撤掉失效引用 {stale.Count} 条 path={path}");
+        return stale.Count;
+    }
+
+    /// <summary>桌面文件改名了:盒子里指向旧路径的引用跟着改,否则点开就是"目标当前不可用"。
+    /// 图标缓存路径一并清掉,按新路径后台重取。</summary>
+    private void UpdateReferencePath(string oldPath, string newPath)
+    {
+        var changed = 0;
+        foreach (var item in AllItems()
+                     .Where(i => string.Equals(i.TargetPath, oldPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            item.TargetPath = newPath;
+            item.DisplayName = OrganizeDisplayName(newPath);
+            item.IconCachePath = null;
+            changed++;
+        }
+
+        if (changed == 0) return;
+        ScheduleSave();
+        Services.LogService.Info("Desktop.Watch", $"引用改名 {changed} 条 {oldPath} -> {newPath}");
+    }
+
+    /// <summary>桌面上新出现的文件 → 自动分类收进「桌面整理」盒子。返回 true = 已收纳(调用方不必再重画)。
+    ///
+    /// 不收的四种情况(每条都对应一个真实反馈):
+    /// ① 开关关着;② 桌面图标可见(用户在用原生桌面,收了会重复显示);
+    /// ③ 临时/隐藏文件(~$ 锁文件、*.tmp —— 收了只会留下死引用);
+    /// ④ <b>用户自己放在桌面的</b>:刚结束过一次拖动(从资源管理器拖过来),或刚从盒子里拖出去。</summary>
+    private bool TryAutoCollect(string path)
+    {
+        if (!AutoCollectNewDesktopFiles) return false;
+        if (DesktopIconsVisible) return false;
+        if (IsExcludedFromAutoCollect(path)) return false;
+        if (!DesktopItemPolicy.ShouldShow(path)) return false;
+        if (IsCollected(path)) return false;
+        if (!File.Exists(path) && !Directory.Exists(path)) return false;
+
+        try
+        {
+            var box = GetOrCreateOrganizeBox(out _);
+            var category = _categorizer.Categorize(path);
+            var tab = box.Tabs.FirstOrDefault(t => t.Key == category) ?? NewTab(box, category);
+
+            var item = _parser.ParsePath(path);
+            item.BoxId = box.Id;
+            item.DisplayName = OrganizeDisplayName(path);
+            item.Order = tab.Items.Count;
+            tab.Items.Add(item);
+
+            box.SelectedTab = tab;          // 切到接收标签,让用户立刻看到它进来了
+            ExtractIconAsync(item);
+            ScheduleSave();                 // 防抖:一次拖进来多个文件时不逐个重复写配置
+            RaiseLooseItemsChanged();       // 桌面层不再画它
+            Services.LogService.Info("Desktop.AutoCollect", $"path={path} tab={category}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            App.LogError(ex, "MainViewModel.TryAutoCollect");
+            return false;
+        }
+    }
+
+    /// <summary>这个新文件是不是"用户自己放在桌面的"。见 <see cref="TryAutoCollect"/> 的说明④。</summary>
+    private bool IsExcludedFromAutoCollect(string path)
+    {
+        // 刚结束过一次拖动:不管是从资源管理器拖来的,还是我们自己把盒内条目拖出去的,都算用户有意放置
+        if (GlobalDragTracker.JustEnded()) return true;
+
+        lock (_ejectedGate)
+        {
+            PruneExpiredEjected();
+            return _recentEjected.ContainsKey(path);
+        }
+    }
+
+    /// <summary>记录"这个路径是刚从盒子里拖到桌面的"(拖出窗口期内不自动收纳)。
+    /// 与 GlobalDragTracker 互补:拖动结束 1.5 秒后才落盘的大文件复制,靠这份名单兜底。</summary>
+    private void MarkEjectedToDesktop(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        lock (_ejectedGate)
+        {
+            PruneExpiredEjected();
+            _recentEjected[path] = Environment.TickCount64;
+        }
+    }
+
+    private void PruneExpiredEjected()
+    {
+        var now = Environment.TickCount64;
+        foreach (var key in _recentEjected
+                     .Where(kv => now - kv.Value > EjectExcludeMs)
+                     .Select(kv => kv.Key)
+                     .ToList())
+            _recentEjected.Remove(key);
     }
 
     private bool IsCollected(string path) =>
@@ -1424,7 +1637,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Interlocked.Exchange(ref _debounce, null)?.Dispose();
         _localizer.LanguageChanged -= OnLanguageChanged;
         _shellChange.SystemIconChanged -= OnSystemIconChanged;
-        if (_desktopWatcher is not null) _desktopWatcher.DesktopItemAppeared -= OnDesktopItemAppeared;
+        if (_desktopWatcher is not null) _desktopWatcher.DesktopItemChanged -= OnDesktopItemChanged;
         GC.SuppressFinalize(this);
     }
 }

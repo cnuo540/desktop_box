@@ -51,6 +51,27 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>桌面上的新文件自动收纳进盒子。状态与持久化都归 MainViewModel,
+    /// 这里只做设置界面的双向代理:勾选即时生效并自动保存。
+    /// 注意它还有个前置条件:只在桌面图标隐藏时才收(见 MainViewModel.TryAutoCollect)。</summary>
+    public bool AutoCollectNewDesktopFiles
+    {
+        get => Main.AutoCollectNewDesktopFiles;
+        set
+        {
+            if (Main.AutoCollectNewDesktopFiles == value) return;
+            try
+            {
+                Main.AutoCollectNewDesktopFiles = value;
+                OnPropertyChanged();
+            }
+            catch (Exception ex)
+            {
+                ReportPersistenceFailure(ex);
+            }
+        }
+    }
+
     /// <summary>盒子背景的不透明度(0.1~1.0,持久化)。只作用于背景色 —— 图标和文字不跟着变淡。
     /// 真正的状态与保存都归 MainViewModel(和托盘菜单里那个滑条读写同一个值),
     /// 这里只做设置面板的双向代理:拖动即时生效、由 MainViewModel 防抖存盘。</summary>

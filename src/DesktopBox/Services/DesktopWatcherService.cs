@@ -14,12 +14,14 @@ public sealed class DesktopWatcherService : IDesktopWatcherService
     private const int DebounceMs = 400;
 
     private readonly List<FileSystemWatcher> _watchers = new();
-    private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>待上报的变化,按路径去重:同一路径后到的事件覆盖先到的。
+    /// 例如"新建后立刻改名"会合并成一条 Renamed(而不是先 Created 再 Renamed —— 那会先收进盒子又改路径)。</summary>
+    private readonly Dictionary<string, DesktopItemChange> _pending = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
     private readonly Timer _debounce;
     private bool _disposed;
 
-    public event EventHandler<string>? DesktopItemAppeared;
+    public event EventHandler<DesktopItemChange>? DesktopItemChanged;
 
     public DesktopWatcherService()
     {
@@ -52,9 +54,9 @@ public sealed class DesktopWatcherService : IDesktopWatcherService
                 IncludeSubdirectories = false,
                 EnableRaisingEvents = true
             };
-            watcher.Created += (_, e) => Enqueue(e.FullPath);
-            watcher.Deleted += (_, e) => Enqueue(e.FullPath);
-            watcher.Renamed += (_, e) => Enqueue(e.FullPath);
+            watcher.Created += (_, e) => Enqueue(new DesktopItemChange(DesktopChangeKind.Created, e.FullPath));
+            watcher.Deleted += (_, e) => Enqueue(new DesktopItemChange(DesktopChangeKind.Deleted, e.FullPath));
+            watcher.Renamed += (_, e) => Enqueue(new DesktopItemChange(DesktopChangeKind.Renamed, e.FullPath, e.OldFullPath));
             _watchers.Add(watcher);
             LogService.Info("DesktopWatcher.Watch", $"dir={dir}");
         }
@@ -64,32 +66,36 @@ public sealed class DesktopWatcherService : IDesktopWatcherService
         }
     }
 
-    private void Enqueue(string path)
+    private void Enqueue(DesktopItemChange change)
     {
-        if (_disposed || string.IsNullOrWhiteSpace(path)) return;
+        if (_disposed || string.IsNullOrWhiteSpace(change.Path)) return;
         lock (_gate)
         {
-            _pending.Add(path);
+            // 改名:旧路径的待办作废(它已经不存在了),否则会先报一条对旧路径的 Created/Deleted。
+            if (change.Kind == DesktopChangeKind.Renamed && !string.IsNullOrEmpty(change.OldPath))
+                _pending.Remove(change.OldPath);
+
+            _pending[change.Path] = change;
             _debounce.Change(DebounceMs, Timeout.Infinite);
         }
     }
 
     private void Flush()
     {
-        string[] batch;
+        DesktopItemChange[] batch;
         lock (_gate)
         {
             if (_disposed || _pending.Count == 0) return;
-            batch = new string[_pending.Count];
-            _pending.CopyTo(batch);
+            batch = new DesktopItemChange[_pending.Count];
+            _pending.Values.CopyTo(batch, 0);
             _pending.Clear();
         }
 
-        foreach (var path in batch)
+        foreach (var change in batch)
         {
             try
             {
-                DesktopItemAppeared?.Invoke(this, path);
+                DesktopItemChanged?.Invoke(this, change);
             }
             catch (Exception ex)
             {

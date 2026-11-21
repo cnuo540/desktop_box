@@ -128,14 +128,16 @@ public static class Shell32
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int SHFileOperationW(ref SHFILEOPSTRUCT lpFileOp);
 
-    /// <summary>把一批路径移到回收站(等同 explorer 里按 Delete)。返回是否成功。</summary>
-    public static bool MoveToRecycleBin(IEnumerable<string> paths, IntPtr owner)
+    /// <summary>把一批路径移到回收站(等同 explorer 里按 Delete)。
+    /// 返回 Win32 错误码:<b>0 = 成功</b>,非 0 = 失败原因(见 <see cref="DescribeDeleteFailure"/>)。
+    /// 以前返回 bool,失败原因被丢掉、界面只写日志 —— 用户按 Delete 看不到任何反应。</summary>
+    public static int MoveToRecycleBin(IEnumerable<string> paths, IntPtr owner)
     {
         var list = paths
             .Where(p => !string.IsNullOrWhiteSpace(p))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (list.Count == 0) return false;
+        if (list.Count == 0) return 0;
 
         // pFrom 要是"双 null 结尾"的路径串
         var operation = new SHFILEOPSTRUCT
@@ -146,8 +148,21 @@ public static class Shell32
             fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
         };
 
-        return SHFileOperationW(ref operation) == 0 && !operation.fAnyOperationsAborted;
+        var rc = SHFileOperationW(ref operation);
+        if (rc == 0 && operation.fAnyOperationsAborted) return 1223;   // ERROR_CANCELLED
+        return rc;
     }
+
+    /// <summary>把 <see cref="MoveToRecycleBin"/> 的返回码映射到提示文案的资源键。
+    /// 抽成纯函数是为了能单测每种失败原因都被认出来。</summary>
+    public static string DescribeDeleteFailure(int rc) => rc switch
+    {
+        2 or 3 => "dialog.delete.notFound",          // ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND
+        5 => "dialog.delete.accessDenied",           // ERROR_ACCESS_DENIED
+        32 or 33 => "dialog.delete.inUse",           // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION
+        1223 => "dialog.delete.cancelled",           // ERROR_CANCELLED
+        _ => "dialog.delete.failed"
+    };
 
     /// <summary>解析通知携带的 PIDL 列表(NewDelivery 模式:WPARAM=数量,LPARAM=PIDL 数组指针)。
     /// 原生签名 (HANDLE,DWORD,PIDLIST**,LONG*)，必须用 IntPtr/int，勿用 uint（x64 截断即 AV）。当前无调用，仅备查。</summary>

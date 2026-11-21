@@ -17,8 +17,14 @@ public static class ItemDragDrop
         => CreateDesktopDropData(new List<BoxItem> { item });
 
     /// <summary>多选拖拽:一次把整组都带上(<paramref name="items"/> 第一个是鼠标按住的那个)。
-    /// 位置数据里的 id 列表让落点知道"这一拖带的是哪几条"。</summary>
-    public static DataObject CreateDesktopDropData(IReadOnlyList<BoxItem> items)
+    /// 位置数据里的 id 列表让落点知道"这一拖带的是哪几条"。
+    ///
+    /// <paramref name="includeFileDrop"/>:要不要同时带上原生 FileDrop。
+    /// 默认不带 —— 桌面落点由 DesktopBox 自己处理,带上的话万一覆盖层没建成,
+    /// explorer 会自己执行一次原生复制,弹"源文件名和目标文件名相同"。
+    /// 但<b>拖给外部程序(微信/资源管理器)必须有 FileDrop</b> 它才认,
+    /// 所以调用方在覆盖层确实建成了之后才传 true(v1.7.37)。</summary>
+    public static DataObject CreateDesktopDropData(IReadOnlyList<BoxItem> items, bool includeFileDrop = false)
     {
         var primary = items[0];
         var data = new DataObject();
@@ -26,6 +32,19 @@ public static class ItemDragDrop
         data.SetData(DataFormats.UnicodeText, primary.TargetPath);
         data.SetData(DragSourceItemFormat, primary.Id);
         data.SetData(DragSourceItemsFormat, items.Select(i => i.Id).ToArray());
+
+        if (includeFileDrop)
+        {
+            var files = items.Select(i => i.TargetPath)
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Where(p => !p.StartsWith("::", StringComparison.Ordinal))
+                .Where(p => !p.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                .Where(p => File.Exists(p) || Directory.Exists(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (files.Count > 0) data.SetData(DataFormats.FileDrop, files.ToArray());
+        }
+
         return data;
     }
 

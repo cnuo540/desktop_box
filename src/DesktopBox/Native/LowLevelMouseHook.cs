@@ -18,6 +18,15 @@ internal sealed class LowLevelMouseHook : IDisposable
     private bool _disposed;
     private bool _dragging;
 
+    // ---- 常驻的"左键拖动"打点(与 TrackingDrag 无关) ----
+    // TrackingDrag 只有我们自己(桌面层框选)会打开;而"用户从资源管理器拖文件到桌面"是我们要识别的
+    // 另一类拖动,钩子必须无条件跟踪,否则自动收纳分不清"拖来的"和"程序新建的"。
+    private const int DragThresholdPx = 5;   // 物理像素:小于它的移动算手抖,不算拖动
+    private bool _leftDown;
+    private bool _leftMoved;
+    private int _leftDownX;
+    private int _leftDownY;
+
     /// <summary>任意鼠标键按下(物理像素,屏幕坐标)。用于"点到别处 → 取消选中"。</summary>
     public event Action<int, int>? ButtonDown;
 
@@ -60,6 +69,10 @@ internal sealed class LowLevelMouseHook : IDisposable
 
     private void Handle(int message, User32.MSLLHOOKSTRUCT info)
     {
+        // 无条件跟踪左键"按下 → 移动 → 抬起",用于给 GlobalDragTracker 打点
+        // (判断桌面上新冒出的文件是不是用户拖过来的)。与下面的 TrackingDrag 逻辑互不干扰。
+        TrackLeftButtonDrag(message, info);
+
         switch (message)
         {
             case User32.WM_LBUTTONDOWN:
@@ -85,6 +98,38 @@ internal sealed class LowLevelMouseHook : IDisposable
                 _dragging = false;
                 TrackingDrag = false;
                 DragEnd?.Invoke(info.pt.X, info.pt.Y);
+                break;
+        }
+    }
+
+    /// <summary>左键 按下→移动→抬起 的常驻跟踪:移动超过阈值才算"拖动",抬起时给
+    /// <see cref="Services.GlobalDragTracker"/> 打点。纯记账,不派发任何事件。</summary>
+    private void TrackLeftButtonDrag(int message, User32.MSLLHOOKSTRUCT info)
+    {
+        switch (message)
+        {
+            case User32.WM_LBUTTONDOWN:
+                _leftDown = true;
+                _leftMoved = false;
+                _leftDownX = info.pt.X;
+                _leftDownY = info.pt.Y;
+                break;
+
+            case User32.WM_MOUSEMOVE:
+                if (!_leftDown || _leftMoved) break;
+                if (Math.Abs(info.pt.X - _leftDownX) < DragThresholdPx
+                    && Math.Abs(info.pt.Y - _leftDownY) < DragThresholdPx) break;
+                _leftMoved = true;
+                break;
+
+            case User32.WM_LBUTTONUP:
+                if (!_leftDown) break;
+                var moved = _leftMoved;
+                var x = info.pt.X;
+                var y = info.pt.Y;
+                _leftDown = false;
+                _leftMoved = false;
+                if (moved) Services.GlobalDragTracker.MarkDragEnd(x, y);
                 break;
         }
     }

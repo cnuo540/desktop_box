@@ -80,6 +80,15 @@
     <s:String x:Key="settings.theme">主题:</s:String>
     <s:String x:Key="settings.language">语言:</s:String>
     <s:String x:Key="settings.hoverExpand">卷起的盒子鼠标悬停时自动展开</s:String>
+    <s:String x:Key="settings.autoCollect">桌面上的新文件自动收纳进盒子</s:String>
+
+    <!-- 删除失败的原因提示(按 SHFileOperation 返回码分流;以前只写日志,现象就是"按 Delete 没反应") -->
+    <s:String x:Key="dialog.delete.inUse">删除失败：文件正被其他程序占用（关掉占用它的程序再试）</s:String>
+    <s:String x:Key="dialog.delete.accessDenied">删除失败：没有权限</s:String>
+    <s:String x:Key="dialog.delete.notFound">删除失败：文件不存在</s:String>
+    <s:String x:Key="dialog.delete.cancelled">删除已取消</s:String>
+    <s:String x:Key="dialog.delete.failed">删除失败（错误 {0}）</s:String>
+    <s:String x:Key="dialog.delete.alreadyGone">文件已不存在，已移除盒子里的引用</s:String>
     <s:String x:Key="lang.auto">自动(跟随系统)</s:String>
     <s:String x:Key="lang.zh-CN">简体中文</s:String>
     <s:String x:Key="lang.en-US">English</s:String>

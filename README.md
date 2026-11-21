@@ -43,6 +43,7 @@
 | | Feature |
 |---|---|
 | 🧹 | **One-click Tidy** — Scans your desktop and auto-sorts every file into a **tabbed box** (Apps / Documents / Images / Videos / Audio / Shortcuts / Archives / Folders / Other). **Incremental**: only new files on each run. |
+| 🧲 | **Auto-collect new desktop files** — Files that appear on the desktop jump into the tidy box by themselves (toggle in Settings; only while desktop icons are hidden). Files **you** put there — dragged from Explorer, or dragged back out of a box — stay on the desktop. Transient junk (`~$` locks, `*.tmp`, `Thumbs.db`) is never collected. |
 | 📌 | **Reference-only, never moves** — The box stores *paths*, not copies. Your files stay exactly where they were. Scripts and shortcuts that hard-code desktop paths keep working. |
 | 📦 | **Drag-drop boxes** — Create custom boxes anywhere, drag in apps/files/folders/URLs, double-click to open. 8-direction resize, edge-snap with hysteresis, multi-monitor clamp. |
 | 🗂️ | **Tabbed boxes** — Convert/merge/split boxes into tabbed containers; tab names are centered and **hovering a tab name switches to it** instantly; reorder tabs by drag. |
@@ -62,6 +63,7 @@
 | | 功能 |
 |---|---|
 | 🧹 | **一键整理** — 扫描桌面,按类型自动归类进**标签盒子**(应用程序/文档/图片/视频/音频/快捷方式/压缩包/文件夹/其他)。**增量**:每次只处理新文件。盒子右键菜单里也能直接触发。 |
+| 🧲 | **新文件自动收纳** — 桌面上新出现的文件自己跳进整理盒子(设置里可关;仅在桌面图标隐藏时生效)。**你自己放的不会被收**:从资源管理器拖到桌面的、从盒子里拖出来的,都留在桌面。临时文件(`~$`、`*.tmp`、`Thumbs.db`)永不收录。 |
 | 📌 | **只引用、绝不移动** — 盒子存的是路径,不是副本。文件原地不动,写死桌面路径的脚本/快捷方式照常工作。 |
 | 📦 | **拖放整理盒** — 任意位置建盒子,拖入程序/文件/文件夹/网址,双击打开。8 向缩放、带迟滞的贴边磁吸、多显示器边界限制。 |
 | 🗂️ | **标签盒子** — 盒子可转标签盒子、合并/拆分；标签名**居中**显示、**鼠标移上去即切换**，标签可拖动排序。 |

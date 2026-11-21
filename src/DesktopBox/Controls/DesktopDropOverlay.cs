@@ -80,9 +80,10 @@ public sealed class DesktopDropOverlay : IDisposable
 
         var source = new HwndSource(parameters);
         source.CompositionTarget.BackgroundColor = Colors.Transparent;
-        // 在盒子位置挖洞:盒子是桌面宿主的子窗口,本来就绘制在顶层窗口之上,但托盘/弹窗等
-        // 置顶窗口会盖住盒子 —— 挖洞保证拖到盒子上的落点仍归盒子,不会被这层吃掉。
-        ApplyExclusionRegion(source.Handle, bounds, excludedBounds);
+        // 挖两类洞:① 盒子(落点归盒子);② 桌面宿主之上压着的外部窗口(落点归对方)。
+        // ②是 v1.7.37 的修复:覆盖层是 HWND_TOPMOST、又铺满全屏,不挖外部窗口的话,
+        // 拖到微信/资源管理器的文件会被我们当成"拖到桌面"截走(现象:拖进微信结果落在桌面上)。
+        ApplyExclusionRegion(source.Handle, bounds, excludedBounds, ForeignWindowsAboveDesktop(host));
         Native.User32.SetWindowPos(
             source.Handle,
             Native.User32.HWND_TOPMOST,
@@ -134,7 +135,10 @@ public sealed class DesktopDropOverlay : IDisposable
         return result;
     }
 
-    private static void ApplyExclusionRegion(IntPtr hwnd, Rect overlayBounds, IEnumerable<Rect> excludedBounds)
+    /// <summary>把窗口区域裁成"全屏减掉给定矩形"。盒子用 <see cref="BoxExclusionPadding"/> 外扩
+    /// (磁贴和窗口边框之间留点余量),外部窗口用 0(外扩会让窗口外那圈落点漏给 explorer)。</summary>
+    private static void ApplyExclusionRegion(IntPtr hwnd, Rect overlayBounds, IEnumerable<Rect> excludedBounds,
+        IEnumerable<Rect>? foreignBounds = null)
     {
         var width = Math.Max(1, (int)Math.Ceiling(overlayBounds.Width));
         var height = Math.Max(1, (int)Math.Ceiling(overlayBounds.Height));
@@ -145,23 +149,26 @@ public sealed class DesktopDropOverlay : IDisposable
         var transferredToWindow = false;
         try
         {
-            foreach (var excluded in BuildExclusionRects(overlayBounds, excludedBounds))
+            var holes = BuildExclusionRects(overlayBounds, excludedBounds)
+                .Concat(BuildExclusionRects(overlayBounds, foreignBounds ?? Array.Empty<Rect>(), padding: 0));
+
+            foreach (var hole in holes)
             {
-                var hole = Native.Gdi32.CreateRectRgn(
-                    excluded.X,
-                    excluded.Y,
-                    excluded.X + excluded.Width,
-                    excluded.Y + excluded.Height);
-                if (hole == IntPtr.Zero)
+                var holeRegion = Native.Gdi32.CreateRectRgn(
+                    hole.X,
+                    hole.Y,
+                    hole.X + hole.Width,
+                    hole.Y + hole.Height);
+                if (holeRegion == IntPtr.Zero)
                     continue;
 
                 try
                 {
-                    Native.Gdi32.CombineRgn(region, region, hole, Native.Gdi32.RGN_DIFF);
+                    Native.Gdi32.CombineRgn(region, region, holeRegion, Native.Gdi32.RGN_DIFF);
                 }
                 finally
                 {
-                    Native.Gdi32.DeleteObject(hole);
+                    Native.Gdi32.DeleteObject(holeRegion);
                 }
             }
 
@@ -172,6 +179,43 @@ public sealed class DesktopDropOverlay : IDisposable
             if (!transferredToWindow)
                 Native.Gdi32.DeleteObject(region);
         }
+    }
+
+    /// <summary><b>压在桌面宿主之上</b>的外部窗口矩形 —— 覆盖层必须给它们挖洞,否则 OLE 拖放
+    /// 按"光标下最顶层的窗口"选落点时永远选中我们(覆盖层 HWND_TOPMOST + 铺满全屏),
+    /// 于是"拖给微信/资源管理器"的文件被当成"拖到桌面"截走(v1.7.37 反馈)。
+    ///
+    /// 只挖"压在桌面上方"的:沿 Z 序从顶往下走到桌面宿主为止 —— 比桌面还靠下的窗口挖了,
+    /// 落点会漏给 explorer,反而弹"源文件名和目标文件名相同"。跳过自己进程的窗口
+    /// (盒子已单独挖;桌面层不能挖,否则拖图标重排会被当成外部落点)与 cloak 残留矩形。</summary>
+    private static IEnumerable<Rect> ForeignWindowsAboveDesktop(IntPtr host)
+    {
+        var result = new List<Rect>();
+        var ourPid = Environment.ProcessId;
+        var root = host == IntPtr.Zero ? IntPtr.Zero : Native.User32.GetAncestor(host, Native.User32.GA_ROOT);
+
+        Native.User32.EnumWindows((hwnd, _) =>
+        {
+            // 走到桌面宿主就停:再往下都是"桌面自己或更靠下的窗口"
+            if (root != IntPtr.Zero && hwnd == root) return false;
+
+            var cls = Native.User32.GetClassNameOf(hwnd);
+            if (cls is "Progman" or "WorkerW" or "SHELLDLL_DefView") return true;   // 桌面本身,不能挖
+
+            if (!Native.User32.IsWindowVisible(hwnd) || Native.User32.IsIconic(hwnd)) return true;
+            Native.User32.GetWindowThreadProcessId(hwnd, out var pid);
+            if (pid == ourPid) return true;
+            if (Native.DwmApi.IsCloaked(hwnd)) return true;
+            if (!Native.User32.GetWindowRect(hwnd, out var r)) return true;
+
+            var rect = new Rect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+            if (rect.Width <= 0 || rect.Height <= 0) return true;
+
+            result.Add(rect);
+            return true;
+        }, IntPtr.Zero);
+
+        return result;
     }
 
     internal static Rect GetVirtualDesktopBounds()

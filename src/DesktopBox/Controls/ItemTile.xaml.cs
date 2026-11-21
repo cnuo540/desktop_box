@@ -157,12 +157,12 @@ public partial class ItemTile : UserControl
             ? selection
             : new List<BoxItem> { item };
 
-        // DesktopDropOverlay 负责桌面落点并由 ViewModel 复制/恢复文件；不附带
-        // FileDrop，避免 Explorer 同时执行一次原生复制。
-        var data = ItemDragDrop.CreateDesktopDropData(dragged);
+        // DesktopDropOverlay 负责桌面落点并由 ViewModel 复制/恢复文件。
+        // 覆盖层先建:它既是"拖到桌面"的落点接收者,也决定要不要带原生 FileDrop
+        // (见 CreateDesktopDropData 的说明 —— 覆盖层没建成时带上会让 explorer 误执行原生复制)。
         var boxBounds = DesktopDropOverlay.OccupiedBoxRects(vm.Boxes);
-
         using var desktopDrop = DesktopDropOverlay.TryCreate(boxBounds);
+        var data = ItemDragDrop.CreateDesktopDropData(dragged, includeFileDrop: desktopDrop is not null);
         try
         {
             // 允许的效果必须和落点的有交集:拖到桌面 = Copy(落盘/复制),落回本盒子 = Move(盒内重排)。
@@ -215,8 +215,8 @@ public partial class ItemTile : UserControl
         if (DataContext is not BoxItem item) return;
         FallbackText.Text = GetGlyph(item);
         Fallback.Background = Brushes.Transparent;
-        bool hasIcon = !string.IsNullOrEmpty(item.IconCachePath);
-        Img.Visibility = hasIcon ? Visibility.Visible : Visibility.Collapsed;
+        // Img 的可见性交给 XAML 绑定 HasIcon:IconCachePath 是后台异步填的,
+        // 在这里按当时的值算一次会永远停在 Collapsed(见 BoxItem.HasIcon 的说明)。
     }
 
     private static string GetGlyph(BoxItem item)
@@ -379,12 +379,29 @@ public partial class ItemTile : UserControl
                 Process.Start(new ProcessStartInfo("explorer.exe", Item.TargetPath) { UseShellExecute = true });
             else
                 Process.Start(new ProcessStartInfo(Item.TargetPath) { UseShellExecute = true });
+
+            // 打开成功就把选中清掉:双击启动完还留着高亮没有意义(反馈:启动后仍是选中状态)。
+            // 打开失败(走下面 catch)时不清 —— 用户还要看着它排查。
+            ClearSelectionAfterOpen();
         }
         catch (Exception ex)
         {
             App.LogError(ex, "ItemTile.OpenItem");
             MessageBox.Show(string.Format(Localizer["dialog.openFail"], ex.Message),
                 Localizer["app.errorTitle"], MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>启动成功后清空选中态(跨盒子的全部选中)。服务没就绪时忽略,不影响打开本身。</summary>
+    private void ClearSelectionAfterOpen()
+    {
+        try
+        {
+            App.Services.GetRequiredService<ViewModels.MainViewModel>().ClearSelection();
+        }
+        catch (Exception ex)
+        {
+            Services.LogService.Warn("ItemTile.ClearSelection", Services.LogService.Truncate(ex.Message, 160));
         }
     }
 
