@@ -366,6 +366,21 @@ public class DesktopChangeHandlingTests
         scanner.Should().NotContain("Equals(\"desktop.ini\"");
     }
 
+    [Fact]
+    public void DesktopMarquee_SelfHealsInsteadOfGettingPermanentlyStuck()
+    {
+        // 真实故障:上一次拉框没收尾(抬起消息丢失)后 _marqueeSelecting 卡在 true,
+        // 之后所有框选都被第一道守卫拦掉 —— 表现为"桌面再也框选不了,重启才好"。
+        // 修法:新的一次左键按下本身就证明上一次已结束,重置而不是 return 放弃。
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+
+        layer.Should().Contain("自愈:上一次拉框未结束");
+        layer.Should().NotContain("跳过:上一次拉框未结束", "卡住时不能只是跳过,必须自愈重置");
+        layer.Should().Contain("ApplyRegion(full: false);   // 区域也收回来");
+        // 诊断探针要留着:框选拉不起来时,该点的真实窗口类名是唯一线索
+        layer.Should().Contain("WindowClassAt(screenX, screenY)");
+    }
+
     private static string ReadRepo(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

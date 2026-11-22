@@ -584,12 +584,31 @@ public sealed class DesktopLayerWindow : IDisposable
     /// <summary>左键按下:落在空白处 = 开始拉框多选(explorer 的框选)。</summary>
     private void OnHookLeftButtonDown(int screenX, int screenY)
     {
-        if (_marqueeSelecting) return;
+        if (_marqueeSelecting)
+        {
+            // 上一次拉框没收尾(抬起消息丢了)会把后面所有框选拦死 —— 表现就是"再也框选不了,重启才好"。
+            // 而新的一次左键按下出现,本身就证明上一次已经结束了:自愈重置,别永久卡住。
+            Services.LogService.Info("DesktopLayer.Marquee", $"自愈:上一次拉框未结束,重置 ({screenX},{screenY})");
+            _marqueeSelecting = false;
+            _mouseHook.TrackingDrag = false;
+            if (_regionExpanded)
+            {
+                _regionExpanded = false;
+                ApplyRegion(full: false);   // 区域也收回来,否则 WindowFromPoint 会一直返回我们自己
+            }
+        }
         if (TileAt(screenX, screenY) is not null) return;      // 点在图标上 → 交给磁贴自己的选中逻辑
         // 只在"按在桌面上"时才拉框:按在别的程序窗口上,那一下不属于我们
-        if (!IsDesktopWindowAt(screenX, screenY)) return;
+        if (!IsDesktopWindowAt(screenX, screenY))
+        {
+            // 框选拉不起来时,这里就是唯一线索:把该点真实窗口的类名记下来
+            Services.LogService.Info("DesktopLayer.Marquee",
+                $"跳过:该点不是桌面 ({screenX},{screenY}) class={WindowClassAt(screenX, screenY)}");
+            return;
+        }
 
         var additive = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
+        Services.LogService.Info("DesktopLayer.Marquee", $"开始 ({screenX},{screenY}) ctrl={additive}");
         _selectionBeforeMarquee.Clear();
         if (additive)
         {
@@ -635,6 +654,7 @@ public sealed class DesktopLayerWindow : IDisposable
 
             _regionExpanded = true;
             ApplyRegion(full: true);
+            Services.LogService.Info("DesktopLayer.Marquee", "拖出阈值 → 铺满区域,开始画框");
         }
 
         DrawMarquee(_marqueeOrigin, current);
@@ -654,7 +674,11 @@ public sealed class DesktopLayerWindow : IDisposable
         }
 
         // 只是"点了一下"没拉出框 → 等同于点了空白处(选中已在按下时清掉)
-        if (rect.Width < 4 && rect.Height < 4) return;
+        if (rect.Width < 4 && rect.Height < 4)
+        {
+            Services.LogService.Info("DesktopLayer.Marquee", $"结束:只点了下没拉框 ({screenX},{screenY})");
+            return;
+        }
 
         var hits = new List<(Border Host, string Path)>();
         foreach (var (path, host) in _tilesByPath)
@@ -670,7 +694,23 @@ public sealed class DesktopLayerWindow : IDisposable
             if (_tilesByPath.TryGetValue(path, out var host)) hits.Add((host, path));
         }
 
+        Services.LogService.Info("DesktopLayer.Marquee",
+            $"结束 rect=[{rect.X:F0},{rect.Y:F0} {rect.Width:F0}x{rect.Height:F0}] 磁贴={_tilesByPath.Count} 命中={hits.Count}");
         SetSelection(hits);
+    }
+
+    /// <summary>取该屏幕上点所在窗口的类名(只给日志用,失败返回 "?")。</summary>
+    private static string WindowClassAt(int screenX, int screenY)
+    {
+        try
+        {
+            var hwnd = Native.User32.WindowFromPoint(screenX, screenY);
+            if (hwnd == IntPtr.Zero) return "(null)";
+            var name = new System.Text.StringBuilder(64);
+            Native.User32.GetClassName(hwnd, name, name.Capacity);
+            return name.ToString();
+        }
+        catch { return "?"; }
     }
 
     /// <summary>Delete 键(全局钩子送进来):光标正压在我们画的图标上或桌面空白处、且本层有选中项时,
