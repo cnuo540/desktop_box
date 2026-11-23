@@ -426,6 +426,26 @@ public class DesktopChangeHandlingTests
         extractor.Should().Contain("IconExtract.Lnk");
     }
 
+    [Fact]
+    public void IconCacheKey_CarryVersionAndSizeSoStaleEntriesCannotStick()
+    {
+        // 真实故障:Photoshop.exe 的图标在 10/16 存成了通用白页,而 key=路径+mtime
+        // (exe 的 mtime 是 2013 年、永不变化)→ 永远命中那个坏文件,新逻辑再正确也轮不到它。
+        // 修法:key 加版本号(改提取逻辑就 +1,全部重新提取)+ 文件大小(补"内容换了但 mtime 没变"的盲区)。
+        var extractor = ReadRepo("src", "DesktopBox", "Services", "IconExtractorService.cs");
+
+        extractor.Should().Contain("CacheVersion");
+        extractor.Should().Contain("CacheKey(");
+        // 三处缓存(路径图标 / 快捷方式资源 / 系统图标)都必须走带版本的 key
+        extractor.Should().Contain("var key = CacheKey(targetPath.ToLowerInvariant()");
+        extractor.Should().Contain("var key = CacheKey(\"lnk|\"");
+        extractor.Should().Contain("var key = CacheKey(\"sys|\"");
+        // 路径图标的 key 必须含文件大小
+        extractor.Should().Contain("+ \"|\" + fileSize)");
+        // 不许再有裸的 StableKey 直接当缓存 key(会绕过版本号)
+        extractor.Should().NotContain("var key = StableKey(");
+    }
+
     private static string ReadRepo(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

@@ -15,6 +15,14 @@ public class IconExtractorService : IIconExtractorService
     private static readonly string CacheDir = AppPaths.IconCacheDir;
     private static readonly object SystemIconCacheGate = new();
 
+    /// <summary>缓存格式版本。<b>改了提取逻辑就必须 +1</b> —— 否则旧的错误结果会永远命中:
+    /// 真实案例是 Photoshop.exe 的图标在 10/16 存成了通用白页,而 key=路径+mtime(exe 的 mtime 是 2013 年、
+    /// 永不变化),于是新逻辑再正确也轮不到它,图标"改也改不回来,重启也没用"。</summary>
+    private const string CacheVersion = "v2";
+
+    /// <summary>缓存 key = 版本 + 原始材料。所有图标缓存都走这里,保证升版本时全部重新提取。</summary>
+    private static string CacheKey(string raw) => StableKey(CacheVersion + "|" + raw);
+
     public string? Extract(string targetPath) => Extract(targetPath, forceRefresh: false);
 
     /// <param name="forceRefresh">true 时删除系统图标的旧缓存,重新提取当前状态(回收站空/满切换后用)。</param>
@@ -50,8 +58,21 @@ public class IconExtractorService : IIconExtractorService
     private string? ExtractPathIcon(string targetPath, bool forceRefresh)
     {
         var stamp = "0";
-        try { if (File.Exists(targetPath) || Directory.Exists(targetPath)) stamp = File.GetLastWriteTimeUtc(targetPath).Ticks.ToString(); } catch { }
-        var key = StableKey(targetPath.ToLowerInvariant() + "|" + stamp);
+        long fileSize = 0;
+        try
+        {
+            if (File.Exists(targetPath))
+            {
+                stamp = File.GetLastWriteTimeUtc(targetPath).Ticks.ToString();
+                fileSize = new FileInfo(targetPath).Length;   // 绿色版解压常保留原 mtime,大小能补上这层盲区
+            }
+            else if (Directory.Exists(targetPath))
+            {
+                stamp = File.GetLastWriteTimeUtc(targetPath).Ticks.ToString();
+            }
+        }
+        catch { }
+        var key = CacheKey(targetPath.ToLowerInvariant() + "|" + stamp + "|" + fileSize);
         var png = Path.Combine(CacheDir, key + ".png");
         if (forceRefresh)
         {
@@ -143,7 +164,7 @@ public class IconExtractorService : IIconExtractorService
 
             var iconStamp = "0";
             try { iconStamp = File.GetLastWriteTimeUtc(iconPath).Ticks.ToString(); } catch { }
-            var key = StableKey("lnk|" + iconPath.ToLowerInvariant() + "|" + iconIndex + "|" + iconStamp);
+            var key = CacheKey("lnk|" + iconPath.ToLowerInvariant() + "|" + iconIndex + "|" + iconStamp);
             var png = Path.Combine(CacheDir, key + ".png");
             if (forceRefresh)
             {
@@ -180,7 +201,7 @@ public class IconExtractorService : IIconExtractorService
     {
         lock (SystemIconCacheGate)
         {
-            var key = StableKey("sys|" + clsidPath);
+            var key = CacheKey("sys|" + clsidPath);
             var png = Path.Combine(CacheDir, key + ".png");
             // 系统图标(回收站空/满、此电脑盘符)的状态会变化,但缓存 key 不含时间戳,
             // 默认命中缓存即返回旧图。forceRefresh=true 时删旧缓存强制重新提取当前状态。
