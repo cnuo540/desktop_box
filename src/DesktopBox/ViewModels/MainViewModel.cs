@@ -1273,6 +1273,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
             item.TargetPath = newPath;
             item.DisplayName = OrganizeDisplayName(newPath);
             item.IconCachePath = null;
+            // 清掉图标之后**必须重取** —— 之前这里只清不取(注释写着"按新路径后台重取"却没调用),
+            // 结果是"改个名图标就永久消失,只能重启才回来"。
+            ExtractIconAsync(item);
             changed++;
         }
 
@@ -1386,7 +1389,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 {
                     var icon = _icon.Extract(it.TargetPath);
                     var disp = Application.Current?.Dispatcher;
-                    if (disp is null || disp.HasShutdownStarted) continue;
+                    if (disp is null)
+                    {
+                        // 没有 UI 线程(测试宿主/无窗口场景):直接赋值。
+                        // 原来这里一律 continue,图标永远回填不到条目上 —— 既是隐患也让这段逻辑无法被测到。
+                        it.IconCachePath = icon;
+                        continue;
+                    }
+                    if (disp.HasShutdownStarted) continue;
                     disp.BeginInvoke(new Action(() => it.IconCachePath = icon));
                 }
                 catch { /* 程序退出中或其他异常,忽略 */ }

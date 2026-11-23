@@ -47,7 +47,8 @@ public class DesktopChangeHandlingTests
     }
 
     private static MainViewModel NewVm(AppConfig config, FakeWatcher watcher,
-        ICategorizerService? categorizer = null, IDesktopScannerService? scanner = null)
+        ICategorizerService? categorizer = null, IDesktopScannerService? scanner = null,
+        string? iconPath = null)
     {
         var store = new Mock<IPersistenceService>();
         store.Setup(s => s.Load()).Returns(config);
@@ -56,11 +57,15 @@ public class DesktopChangeHandlingTests
         var icons = new Mock<IDesktopIconsService>();
         icons.SetupGet(d => d.AreIconsVisible).Returns(false);
 
+        var iconExtractor = new Mock<IIconExtractorService>();
+        if (iconPath is not null)
+            iconExtractor.Setup(i => i.Extract(It.IsAny<string>())).Returns(iconPath);
+
         var categorizerMock = categorizer is null ? new Mock<ICategorizerService>() : null;
         categorizerMock?.Setup(c => c.Categorize(It.IsAny<string>())).Returns("cat.docs");
 
         return new MainViewModel(store.Object, new DropParserService(),
-            new Mock<IIconExtractorService>().Object,
+            iconExtractor.Object,
             new Mock<IOrganizeService>().Object,
             categorizer ?? categorizerMock!.Object,
             icons.Object, localizer.Object,
@@ -379,6 +384,46 @@ public class DesktopChangeHandlingTests
         layer.Should().Contain("ApplyRegion(full: false);   // 区域也收回来");
         // 诊断探针要留着:框选拉不起来时,该点的真实窗口类名是唯一线索
         layer.Should().Contain("WindowClassAt(screenX, screenY)");
+    }
+
+    [Fact]
+    public void RenamedReference_ReExtractsItsIcon()
+    {
+        // 真实故障(v1.7.38 及以前):UpdateReferencePath 只把 IconCachePath 置空、
+        // 从不重新提取 —— 注释写着"按新路径后台重取"但代码没调。
+        // 表现:桌面上把 Photoshop.exe.lnk 改个名,盒子里的图标就永久消失,只能重启才回来。
+        var oldPath = DesktopPath($"dbx-icon-old-{Guid.NewGuid():N}.txt");
+        var newPath = DesktopPath($"dbx-icon-new-{Guid.NewGuid():N}.txt");
+        const string fakeIcon = @"C:\fake\icon.png";
+
+        var watcher = new FakeWatcher();
+        var vm = NewVm(ConfigWithItem(oldPath), watcher, iconPath: fakeIcon);
+        vm.LoadCommand.Execute(null);
+        vm.DesktopIconsVisible = false;
+
+        var item = vm.Boxes[0].Items.Single();
+        item.IconCachePath = null;          // 改名时会被清空
+
+        watcher.Raise(new DesktopItemChange(DesktopChangeKind.Renamed, newPath, oldPath));
+
+        // 图标提取走 Task.Run,等它回填
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (item.IconCachePath is null && sw.ElapsedMilliseconds < 3000)
+            System.Threading.Thread.Sleep(20);
+
+        item.TargetPath.Should().Be(newPath);
+        item.IconCachePath.Should().Be(fakeIcon, "改名清掉图标后必须重新提取,否则图标永久消失");
+    }
+
+    [Fact]
+    public void IconExtraction_LogsFailuresInsteadOfSwallowingThem()
+    {
+        // 图标不显示时原来完全无从查起:Extract 是裸 catch 返回 null、LoadIconAsync 静默 return。
+        var extractor = ReadRepo("src", "DesktopBox", "Services", "IconExtractorService.cs");
+
+        extractor.Should().Contain("IconExtract.Fail");
+        extractor.Should().Contain("IconExtract.NoIcon");
+        extractor.Should().Contain("IconExtract.Lnk");
     }
 
     private static string ReadRepo(params string[] parts)

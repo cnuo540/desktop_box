@@ -39,8 +39,10 @@ public class IconExtractorService : IIconExtractorService
 
             return ExtractPathIcon(targetPath, forceRefresh);
         }
-        catch
+        catch (Exception ex)
         {
+            // 这里原本是裸 catch 静默返回 null —— 图标不显示时完全无从查起。
+            LogService.Warn("IconExtract.Fail", $"{Path.GetFileName(targetPath)}: {ex.GetType().Name} {LogService.Truncate(ex.Message, 120)}");
             return null;
         }
     }
@@ -60,7 +62,13 @@ public class IconExtractorService : IIconExtractorService
         var info = new Shell32.SHFILEINFO();
         var size = (uint)Marshal.SizeOf<Shell32.SHFILEINFO>();
         Shell32.SHGetFileInfo(targetPath, 0, ref info, size, Shell32.SHGFI_ICON | Shell32.SHGFI_LARGEICON);
-        if (info.hIcon == IntPtr.Zero) return null;
+        if (info.hIcon == IntPtr.Zero)
+        {
+            // SHGetFileInfo 失败(常见于权限/损坏的 shell 扩展)。记下路径与是否存在,便于对照真机复现
+            LogService.Warn("IconExtract.NoIcon",
+                $"{Path.GetFileName(targetPath)}: SHGetFileInfo 返回空图标 (exists={File.Exists(targetPath) || Directory.Exists(targetPath)})");
+            return null;
+        }
 
         try
         {
@@ -80,6 +88,11 @@ public class IconExtractorService : IIconExtractorService
         try
         {
             var (iconPath, iconIndex) = ShellLinkResolver.ResolveIconLocation(lnkPath);
+            var targetPath = ShellLinkResolver.ResolveTarget(lnkPath);
+            // .lnk 的图标来源有三种(图标位置 / 目标 exe / .lnk 自身),出问题时要能看出走的是哪条
+            LogService.Info("IconExtract.Lnk",
+                $"{Path.GetFileName(lnkPath)}: iconPath={(string.IsNullOrWhiteSpace(iconPath) ? "(空)" : iconPath)} idx={iconIndex} target={LogService.Truncate(targetPath ?? "(空)", 80)}");
+
             if (!string.IsNullOrWhiteSpace(iconPath))
             {
                 iconPath = Environment.ExpandEnvironmentVariables(iconPath.Trim().Trim('"'));
@@ -104,18 +117,19 @@ public class IconExtractorService : IIconExtractorService
                 }
             }
 
-            var targetPath = ShellLinkResolver.ResolveTarget(lnkPath);
             if (!string.IsNullOrWhiteSpace(targetPath))
             {
-                var targetIcon = ExtractPathIcon(targetPath, forceRefresh);
+                var targetIcon = ExtractPathIcon(targetPath!, forceRefresh);
                 if (!string.IsNullOrEmpty(targetIcon))
                     return targetIcon;
             }
 
             return ExtractPathIcon(lnkPath, forceRefresh);
         }
-        catch
+        catch (Exception ex)
         {
+            LogService.Warn("IconExtract.Lnk",
+                $"{Path.GetFileName(lnkPath)}: {ex.GetType().Name} {LogService.Truncate(ex.Message, 120)}");
             return null;
         }
     }
