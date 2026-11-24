@@ -61,12 +61,16 @@ public class DesktopChangeHandlingTests
         if (iconPath is not null)
             iconExtractor.Setup(i => i.Extract(It.IsAny<string>())).Returns(iconPath);
 
+        // 默认扫不到新文件:不配置的话 Moq 返回 null,Organize 里 LINQ 直接抛
+        var organize = new Mock<IOrganizeService>();
+        organize.Setup(o => o.ScanAndCategorize()).Returns(new List<(string Path, string Category)>());
+
         var categorizerMock = categorizer is null ? new Mock<ICategorizerService>() : null;
         categorizerMock?.Setup(c => c.Categorize(It.IsAny<string>())).Returns("cat.docs");
 
         return new MainViewModel(store.Object, new DropParserService(),
             iconExtractor.Object,
-            new Mock<IOrganizeService>().Object,
+            organize.Object,
             categorizer ?? categorizerMock!.Object,
             icons.Object, localizer.Object,
             new Mock<IShellChangeNotifierService>().Object,
@@ -489,6 +493,81 @@ public class DesktopChangeHandlingTests
         // 两处必须一致使用:移除虚拟项后要给反馈,否则又是"按了没反应"
         ReadRepo("src", "DesktopBox", "ViewModels", "MainViewModel.cs")
             .Should().Contain("_localizer[\"dialog.delete.virtualOnly\"]");
+    }
+
+    [Fact]
+    public void Organize_MergesLegacySystemIconsTabIntoShortcuts()
+    {
+        // 真实反馈:删掉「系统图标」标签后,下次一键整理又把它建回来 —— 标签永远删不掉。
+        // 现在改成:老标签内容并进「快捷方式」,老标签移除,不再单独建。
+        var clsid = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+        var config = new AppConfig
+        {
+            Boxes =
+            [
+                new Box
+                {
+                    Key = "box.organize", Name = "桌面整理",
+                    Tabs =
+                    [
+                        new BoxTab
+                        {
+                            Key = "tab.sysicons", Name = "系统图标",
+                            Items = [new BoxItem { Type = ItemType.SystemIcon, TargetPath = clsid, DisplayName = "回收站" }]
+                        },
+                        new BoxTab { Key = "cat.docs", Name = "文档", Items = [] }
+                    ]
+                }
+            ]
+        };
+        var vm = NewVm(config, new FakeWatcher());
+        vm.LoadCommand.Execute(null);
+
+        vm.OrganizeCommand.Execute(null);
+
+        var box = vm.Boxes.Single(b => b.Key == "box.organize");
+        box.Tabs.Should().NotContain(t => t.Key == "tab.sysicons", "老标签必须被移除,否则删了下次整理又回来");
+        var shortcuts = box.Tabs.Single(t => t.Key == "cat.shortcut");
+        shortcuts.Items.Should().ContainSingle(i => i.TargetPath == clsid, "内容要并进「快捷方式」");
+        box.Tabs.Should().Contain(t => t.Key == "cat.docs", "其它标签不受影响");
+    }
+
+    [Fact]
+    public void Organize_PutsSystemIconsIntoShortcuts_NotASeparateTab()
+    {
+        var config = new AppConfig
+        {
+            Boxes =
+            [
+                new Box
+                {
+                    Key = "box.organize", Name = "桌面整理",
+                    Tabs = [new BoxTab { Key = "cat.docs", Name = "文档", Items = [] }]
+                }
+            ]
+        };
+        var vm = NewVm(config, new FakeWatcher());
+        vm.LoadCommand.Execute(null);
+
+        vm.OrganizeCommand.Execute(null);
+
+        var box = vm.Boxes.Single(b => b.Key == "box.organize");
+        box.Tabs.Should().NotContain(t => t.Key == "tab.sysicons", "不再单独建「系统图标」标签");
+        var shortcuts = box.Tabs.Single(t => t.Key == "cat.shortcut");
+        shortcuts.Items.Should().HaveCount(4, "4 个系统图标(此电脑/回收站/控制面板/网络)应放进快捷方式");
+        shortcuts.Items.Should().OnlyContain(i => i.Type == ItemType.SystemIcon);
+    }
+
+    [Fact]
+    public void Organize_NeverRecreatesTheSystemIconsTab()
+    {
+        var vm = ReadRepo("src", "DesktopBox", "ViewModels", "MainViewModel.cs");
+
+        vm.Should().NotContain("EnsureSystemIconsTab(", "旧方法应已删除");
+        vm.Should().Contain("EnsureSystemIconsInShortcutTab(");
+        // 创建语句必须消失(按 Key 查找/迁移仍然允许)
+        vm.Should().NotContain("new BoxTab { Key = \"tab.sysicons\"");
+        vm.Should().Contain("CategorizerService.Shortcut");
     }
 
     private static string ReadRepo(params string[] parts)

@@ -654,8 +654,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
         }
 
-        // 系统图标标签(首次或缺失时补上,放最后)
-        bool sysAdded = EnsureSystemIconsTab(box, allItems);
+        // 系统图标并进「快捷方式」标签(不再单独建标签:用户删掉后下次整理又会回来)
+        bool sysAdded = EnsureSystemIconsInShortcutTab(box, allItems);
 
         // 切到第一个有新文件的标签;无新增时保持首个标签。避免新增文件在其它标签而用户以为"没回来"。
         box.SelectedTab = firstChangedTab ?? box.Tabs.FirstOrDefault();
@@ -752,13 +752,47 @@ public partial class MainViewModel : ObservableObject, IDisposable
         return tab;
     }
 
-    /// <summary>确保整理盒子有「系统图标」标签(此电脑/回收站/控制面板/网络)。已有则不动。</summary>
-    private bool EnsureSystemIconsTab(BoxViewModel box, List<BoxItem> extracted)
+    /// <summary>把系统图标(此电脑/回收站/控制面板/网络)放进「快捷方式」标签,
+    /// <b>不再单独建「系统图标」标签</b>。
+    ///
+    /// 旧行为是整理时检测不到 tab.sysicons 就重建一个 —— 用户删掉标签后下次整理又回来,
+    /// 标签永远删不掉(真实反馈)。现在:
+    /// ① 老标签的内容并进 cat.shortcut,老标签一并移除(下次整理也不会再建);
+    /// ② 4 个系统图标只在盒子里哪儿都没有时才补。
+    /// 返回是否<b>新增</b>过系统图标(供整理完成提示用;单纯迁移不算"补上")。</summary>
+    private bool EnsureSystemIconsInShortcutTab(BoxViewModel box, List<BoxItem> extracted)
     {
-        if (box.Tabs.Any(t => t.Key == "tab.sysicons")) return false;
-        var tab = new BoxTab { Key = "tab.sysicons", Name = _localizer["tab.sysicons"] };
+        var legacy = box.Tabs.FirstOrDefault(t => t.Key == "tab.sysicons");
+        var tab = box.Tabs.FirstOrDefault(t => t.Key == CategorizerService.Shortcut);
+        if (tab is null) tab = NewTab(box, CategorizerService.Shortcut);
+
+        // 盒子里已有的路径(排除老标签本身 —— 否则迁移时会被自己挡住)
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in box.Tabs)
+        {
+            if (ReferenceEquals(t, legacy)) continue;
+            foreach (var i in t.Items) present.Add(i.TargetPath);
+        }
+        foreach (var i in box.Items) present.Add(i.TargetPath);
+
+        if (legacy is not null)
+        {
+            foreach (var item in legacy.Items.ToList())
+            {
+                if (!present.Add(item.TargetPath)) continue;   // 别的标签已有 → 丢弃重复
+                item.BoxId = box.Id;
+                item.Order = tab.Items.Count;
+                tab.Items.Add(item);
+                extracted.Add(item);
+            }
+            box.Tabs.Remove(legacy);
+            Services.LogService.Info("Organize.SysIcons", $"老「系统图标」标签已并入「快捷方式」({tab.Items.Count} 项)");
+        }
+
+        var added = false;
         foreach (var def in SystemIcons.Definitions)
         {
+            if (!present.Add(def.Clsid)) continue;
             var item = new BoxItem
             {
                 Type = ItemType.SystemIcon,
@@ -769,9 +803,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
             };
             tab.Items.Add(item);
             extracted.Add(item);
+            added = true;
         }
-        box.Tabs.Add(tab);
-        return true;
+        return added;
     }
 
     /// <summary>整理时的显示名:.lnk 去扩展名,其余用完整文件名(与旧版一致)。</summary>
