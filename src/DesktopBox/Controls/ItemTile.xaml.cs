@@ -122,7 +122,9 @@ public partial class ItemTile : UserControl
             return;
         }
         _dragStart = e.GetPosition(null);
-        _dragCandidate = ItemDragDrop.CanDragAsFile(Item);
+        // 任何条目都能拖:盒内换位/跨标签用的是 DragSourceItemFormat,和"能不能当文件拖"无关。
+        // 之前拿 CanDragAsFile 当门槛,系统图标与网址 _dragCandidate 永远 false → 完全拖不动(真实反馈)。
+        _dragCandidate = true;
         _collapseOnMouseUp = false;
         _dragStarted = false;
 
@@ -160,8 +162,11 @@ public partial class ItemTile : UserControl
         // DesktopDropOverlay 负责桌面落点并由 ViewModel 复制/恢复文件。
         // 覆盖层先建:它既是"拖到桌面"的落点接收者,也决定要不要带原生 FileDrop
         // (见 CreateDesktopDropData 的说明 —— 覆盖层没建成时带上会让 explorer 误执行原生复制)。
+        // 但**这一拖里没有任何真文件**(纯系统图标/网址)时不能建覆盖层:
+        // 否则"拖到桌面"会走 HandleItemsDroppedOnDesktop,把虚拟项出盒却哪儿也落不了。
+        var canLandOnDesktop = dragged.Any(ItemDragDrop.CanDragAsFile);
         var boxBounds = DesktopDropOverlay.OccupiedBoxRects(vm.Boxes);
-        using var desktopDrop = DesktopDropOverlay.TryCreate(boxBounds);
+        using var desktopDrop = canLandOnDesktop ? DesktopDropOverlay.TryCreate(boxBounds) : null;
         var data = ItemDragDrop.CreateDesktopDropData(dragged, includeFileDrop: desktopDrop is not null);
         try
         {
@@ -186,7 +191,9 @@ public partial class ItemTile : UserControl
         {
             // 拖到桌面 = 出盒(参考 Coodesker):从盒子移除 + 文件不在桌面则复制过去。
             // 按住的那条在选中集合里时,整组一起出盒。
-            vm.HandleItemsDroppedOnDesktop(dragged);
+            // 虚拟项(系统图标/网址)没有文件可落盘:跟着出盒只会凭空消失,留在盒子里。
+            var landable = dragged.Where(ItemDragDrop.CanDragAsFile).ToList();
+            if (landable.Count > 0) vm.HandleItemsDroppedOnDesktop(landable);
         }
         e.Handled = true;
     }

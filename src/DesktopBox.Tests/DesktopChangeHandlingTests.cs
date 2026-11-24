@@ -570,6 +570,26 @@ public class DesktopChangeHandlingTests
         vm.Should().Contain("CategorizerService.Shortcut");
     }
 
+    [Fact]
+    public void VirtualItems_AreDraggableInsideTheBox_ButNeverToTheDesktop()
+    {
+        // 真实反馈:4 个系统图标在盒子里完全拖不动 ——
+        // _dragCandidate 拿 CanDragAsFile 当门槛,而它明确排除 SystemIcon/Url,
+        // 于是 OnTileMouseMove 第一行就 return。盒内换位用的是 DragSourceItemFormat,
+        // 根本不需要"能当文件拖"。
+        var tile = ReadRepo("src", "DesktopBox", "Controls", "ItemTile.xaml.cs");
+
+        tile.Should().Contain("_dragCandidate = true");
+        tile.Should().NotContain("_dragCandidate = ItemDragDrop.CanDragAsFile");
+        // 桌面覆盖层只在这一拖里真有文件时才建:纯虚拟项拖到桌面不该触发"出盒"
+        tile.Should().Contain("dragged.Any(ItemDragDrop.CanDragAsFile)");
+        // 混合拖拽时只有文件出盒,虚拟项留下
+        tile.Should().Contain("var landable = dragged.Where(ItemDragDrop.CanDragAsFile)");
+        // FileDrop 那道过滤本身不能放松(它挡的是"给外部程序的载荷")
+        ReadRepo("src", "DesktopBox", "Controls", "ItemDragDrop.cs")
+            .Should().Contain("item.Type is not ItemType.Url and not ItemType.SystemIcon");
+    }
+
     private static string ReadRepo(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
