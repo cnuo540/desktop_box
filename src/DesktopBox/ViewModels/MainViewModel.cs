@@ -393,32 +393,45 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// ② 目标全都不存在时以前直接 return 0、连日志都没有 → 现在按"处理成功"清掉引用并提示。</summary>
     public int MoveToRecycleBin(IEnumerable<string>? paths)
     {
-        var requested = (paths ?? Enumerable.Empty<string>())
+        var all = (paths ?? Enumerable.Empty<string>())
             .Where(p => !string.IsNullOrWhiteSpace(p))
-            .Where(p => !p.StartsWith("::", StringComparison.Ordinal))
-            .Where(p => !p.StartsWith("http", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (requested.Count == 0) return 0;
+        if (all.Count == 0) return 0;
 
-        var existing = requested.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
-        var missing = requested.Count - existing.Count;
+        // 真实文件才进回收站;系统图标(::CLSID)与网址是虚拟对象,没有文件可删 ——
+        // 但用户按 Delete 的意图是"从盒子里拿掉",所以它们要走"撤引用"这条线。
+        // 旧实现把 :: 直接过滤掉,requested 变空后 return 0 静默返回 → 按 Delete 完全没反应,
+        // 于是"系统图标"标签永远清不空、永远删不掉。
+        var requested = all
+            .Where(p => !p.StartsWith("::", StringComparison.Ordinal))
+            .Where(p => !p.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var virtualCount = all.Count - requested.Count;
 
-        if (existing.Count > 0)
+        var existing = new List<string>();
+        var missing = 0;
+        if (requested.Count > 0)
         {
-            var rc = Shell32.MoveToRecycleBin(existing, IntPtr.Zero);
-            if (rc != 0)
-            {
-                Services.LogService.Warn("Item.Delete", $"移到回收站失败 rc={rc}: {existing.Count} 项");
-                ToastWindow.Show(string.Format(_localizer[Shell32.DescribeDeleteFailure(rc)], rc), opacity: 0.9);
-                return 0;   // 文件还在,引用也保留
-            }
+            existing = requested.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
+            missing = requested.Count - existing.Count;
 
-            Services.LogService.Info("Item.Delete", $"已移到回收站 {existing.Count} 项");
+            if (existing.Count > 0)
+            {
+                var rc = Shell32.MoveToRecycleBin(existing, IntPtr.Zero);
+                if (rc != 0)
+                {
+                    Services.LogService.Warn("Item.Delete", $"移到回收站失败 rc={rc}: {existing.Count} 项");
+                    ToastWindow.Show(string.Format(_localizer[Shell32.DescribeDeleteFailure(rc)], rc), opacity: 0.9);
+                    return 0;   // 文件还在,引用也保留(混合选择整体回滚)
+                }
+
+                Services.LogService.Info("Item.Delete", $"已移到回收站 {existing.Count} 项");
+            }
         }
 
-        // 引用清理:真删掉的 + 本来就不存在的,都从盒子里撤掉(否则留下"目标当前不可用"的死引用)
-        foreach (var path in requested)
+        // 引用清理:真删掉的 + 本来就不存在的 + 虚拟项,都从盒子里撤掉
+        foreach (var path in all)
         {
             var stale = AllItems()
                 .Where(i => string.Equals(i.TargetPath, path, StringComparison.OrdinalIgnoreCase))
@@ -429,11 +442,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
         RaiseLooseItemsChanged();
         ScheduleSave();
 
-        // 一个都没真删掉(文件早没了)也要说一声,否则用户仍觉得"按了没反应"
-        if (existing.Count == 0 && missing > 0)
+        if (requested.Count == 0 && virtualCount > 0)
+        {
+            // 只动了虚拟项:必须说一声,否则又是"按了没反应"
+            Services.LogService.Info("Item.Delete", $"移除虚拟引用 {virtualCount} 项");
+            ToastWindow.Show(string.Format(_localizer["dialog.delete.virtualOnly"], virtualCount), opacity: 0.9);
+        }
+        else if (existing.Count == 0 && missing > 0)
+        {
+            // 一个都没真删掉(文件早没了)也要说一声,否则用户仍觉得"按了没反应"
             ToastWindow.Show(_localizer["dialog.delete.alreadyGone"], opacity: 0.9);
+        }
 
-        return requested.Count;
+        return all.Count;
     }
 
     /// <summary>按条目 Id 找条目(跨盒子/跨标签)。盒内拖拽重排时用它认出"拖的是哪一条"。</summary>

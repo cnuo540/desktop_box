@@ -30,6 +30,12 @@ internal sealed class ToastWindow
     {
         if (string.IsNullOrWhiteSpace(message)) return;
 
+        // 建 WPF 窗口必须在 STA 线程上 —— 测试宿主/线程池线程会直接抛
+        // "调用线程必须为 STA"。生产里这段只在 UI 线程(STA)执行,不受影响;
+        // 非 STA 时跳过提示即可:提示是锦上添花,绝不能把调用方(如删除流程)打挂。
+        if (System.Threading.Thread.CurrentThread.GetApartmentState() != System.Threading.ApartmentState.STA)
+            return;
+
         _current?.CloseNow();
         _current = new ToastWindow(message, Math.Clamp(opacity, 0.1, 1.0));
     }

@@ -89,6 +89,7 @@
     <s:String x:Key="dialog.delete.cancelled">删除已取消</s:String>
     <s:String x:Key="dialog.delete.failed">删除失败（错误 {0}）</s:String>
     <s:String x:Key="dialog.delete.alreadyGone">文件已不存在，已移除盒子里的引用</s:String>
+    <s:String x:Key="dialog.delete.virtualOnly">已从盒子移除 {0} 个系统图标/网址（它们是虚拟对象，不涉及文件删除）</s:String>
     <s:String x:Key="lang.auto">自动(跟随系统)</s:String>
     <s:String x:Key="lang.zh-CN">简体中文</s:String>
     <s:String x:Key="lang.en-US">English</s:String>

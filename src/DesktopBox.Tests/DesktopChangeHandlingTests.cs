@@ -446,6 +446,51 @@ public class DesktopChangeHandlingTests
         extractor.Should().NotContain("var key = StableKey(");
     }
 
+    [Fact]
+    public void DeletingASystemIcon_RemovesItsReferenceInsteadOfDoingNothing()
+    {
+        // 真实故障:系统图标标签里的 4 个图标按 Delete 完全没反应 ——
+        // MoveToRecycleBin 把 "::" 开头的路径过滤掉后 requested 变空,直接 return 0,
+        // 于是标签永远清不空 → 永远删不掉(右键"移除"可用,但 Delete 这条主路是死的)。
+        var vm = NewVm(ConfigWithItem("::{645FF040-5081-101B-9F08-00AA002F954E}"), new FakeWatcher());
+        vm.LoadCommand.Execute(null);
+
+        vm.Boxes[0].Items.Should().ContainSingle();
+
+        var removed = vm.MoveToRecycleBin(new[] { "::{645FF040-5081-101B-9F08-00AA002F954E}" });
+
+        removed.Should().Be(1, "虚拟项也要算作'处理成功',否则调用方不清选中");
+        vm.Boxes[0].Items.Should().BeEmpty("引用必须被撤掉,否则标签永远非空、永远删不掉");
+    }
+
+    [Fact]
+    public void DeletingAnUrl_RemovesItsReferenceToo()
+    {
+        var vm = NewVm(ConfigWithItem("https://example.com/page"), new FakeWatcher());
+        vm.LoadCommand.Execute(null);
+
+        var removed = vm.MoveToRecycleBin(new[] { "https://example.com/page" });
+
+        removed.Should().Be(1);
+        vm.Boxes[0].Items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void DeleteFeedbackKeys_ExistInBothLanguages()
+    {
+        var zh = ReadRepo("src", "DesktopBox", "Resources", "Strings.zh-CN.xaml");
+        var en = ReadRepo("src", "DesktopBox", "Resources", "Strings.en-US.xaml");
+
+        foreach (var key in new[] { "dialog.delete.virtualOnly" })
+        {
+            zh.Should().Contain($"x:Key=\"{key}\"", $"中文缺 {key}");
+            en.Should().Contain($"x:Key=\"{key}\"", $"英文缺 {key}");
+        }
+        // 两处必须一致使用:移除虚拟项后要给反馈,否则又是"按了没反应"
+        ReadRepo("src", "DesktopBox", "ViewModels", "MainViewModel.cs")
+            .Should().Contain("_localizer[\"dialog.delete.virtualOnly\"]");
+    }
+
     private static string ReadRepo(params string[] parts)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
