@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows;          // Clipboard(复制粘贴语义测试)
 using DesktopBox.Models;
 using DesktopBox.Services;
 using DesktopBox.ViewModels;
@@ -588,6 +589,120 @@ public class DesktopChangeHandlingTests
         // FileDrop 那道过滤本身不能放松(它挡的是"给外部程序的载荷")
         ReadRepo("src", "DesktopBox", "Controls", "ItemDragDrop.cs")
             .Should().Contain("item.Type is not ItemType.Url and not ItemType.SystemIcon");
+    }
+
+    [Fact]
+    public void CopyThenPasteOntoDesktop_MovesTheItemsOutOfTheBox()
+    {
+        // 用户要求:盒子内 Ctrl+C → 粘贴到桌面 = 移动(条目出盒、文件落桌面),
+        // 和"拖出盒子"同一套语义;而不是 explorer 的原生复制(那会弹"源文件名和目标文件名相同")。
+        // 整段放在 STA 线程里跑:WPF Clipboard 要求 STA(生产里钩子回调就在 STA 的 UI 线程上)。
+        var src = Path.Combine(Path.GetTempPath(), $"dbx-copy-{Guid.NewGuid():N}.txt");
+        File.WriteAllText(src, "x");
+        var desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        var landed = Path.Combine(desktop, Path.GetFileName(src));
+        if (File.Exists(landed)) File.Delete(landed);   // 先清掉上次残留,避免 (2) 后缀干扰
+
+        (int Copied, bool HasMarker, int Pasted, bool Landed, int LeftInBox, bool DesktopWritable) result = default;
+        var thread = new Thread(() =>
+        {
+            var vm = NewVm(ConfigWithItem(src), new FakeWatcher());
+            vm.LoadCommand.Execute(null);
+            var item = vm.Boxes[0].Items.Single();
+            item.IsSelected = true;
+
+            // 沙箱环境里测试进程可能写不了真实桌面(ACL 拒绝,与本功能无关) → 探测一下
+            var canWrite = false;
+            try
+            {
+                var probe = Path.Combine(desktop, $"dbx-probe-{Guid.NewGuid():N}.tmp");
+                File.WriteAllText(probe, "x");
+                File.Delete(probe);
+                canWrite = true;
+            }
+            catch { /* 写不了就只验剪贴板与出盒语义 */ }
+
+            var copied = vm.CopySelectionToClipboard();
+            var hasMarker = MainViewModel.ReadCopiedItemIds() is not null;
+            var pasted = vm.PasteOntoDesktop();
+            result = (copied, hasMarker, pasted, File.Exists(landed), vm.Boxes[0].Items.Count, canWrite);
+            try { Clipboard.Clear(); } catch { }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        thread.Join(15000);
+
+        try
+        {
+            result.Copied.Should().Be(1);
+            result.HasMarker.Should().BeTrue("剪贴板里必须带「这是从盒子复制的」标记");
+            result.Pasted.Should().Be(1);
+            result.LeftInBox.Should().Be(0, "粘贴到桌面 = 移动,条目必须出盒");
+            if (result.DesktopWritable)
+                result.Landed.Should().BeTrue("文件要落到桌面上(本机沙箱拒绝写桌面时跳过此断言)");
+        }
+        finally
+        {
+            if (File.Exists(landed)) File.Delete(landed);
+            File.Delete(src);
+        }
+    }
+
+    [Fact]
+    public void MoveOrCopyIntoFolder_MovesOrCopiesAndSkipsSelfAndAlreadyInside()
+    {
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var folder = Path.Combine(root.FullName, "收纳夹");
+            Directory.CreateDirectory(folder);
+            var inside = Path.Combine(folder, "已在里面.txt");
+            File.WriteAllText(inside, "x");
+            var loose = Path.Combine(root.FullName, "散落.txt");
+            File.WriteAllText(loose, "x");
+
+            var vm = NewVm(new AppConfig(), new FakeWatcher());
+            vm.LoadCommand.Execute(null);
+
+            // 移动:散落文件进去
+            vm.MoveOrCopyIntoFolder(new[] { loose }, folder, move: true).Should().Be(1);
+            File.Exists(Path.Combine(folder, "散落.txt")).Should().BeTrue();
+            File.Exists(loose).Should().BeFalse("move:原文件应已挪走");
+
+            // 跳过自己 / 已经在里面的:一个都不该重复处理
+            vm.MoveOrCopyIntoFolder(new[] { folder }, folder, move: true).Should().Be(0, "不能把自己拖进自己");
+            vm.MoveOrCopyIntoFolder(new[] { inside }, folder, move: true).Should().Be(0, "已在里面的不再处理");
+
+            // 复制:原件保留
+            var another = Path.Combine(root.FullName, "另一个.txt");
+            File.WriteAllText(another, "x");
+            vm.MoveOrCopyIntoFolder(new[] { another }, folder, move: false).Should().Be(1);
+            File.Exists(another).Should().BeTrue("copy:原件必须还在");
+            File.Exists(Path.Combine(folder, "另一个.txt")).Should().BeTrue();
+        }
+        finally { root.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void KeyboardAndDropWiring_MatchesTheAgreedSemantics()
+    {
+        // 语义表(用户确认):盒子→桌面=移动;桌面→盒子=移动;两者→文件夹=复制;
+        // 拖到文件夹图标上=移进该文件夹;拖到两图标之间=仅排序。
+        var hook = ReadRepo("src", "DesktopBox", "Native", "KeyboardHook.cs");
+        hook.Should().Contain("SuppressCurrentKey", "Ctrl+V 要能吞掉原生粘贴,否则 explorer 会再复制一次");
+        hook.Should().Contain("return (IntPtr)1;   // 吞掉");
+
+        var main = ReadRepo("src", "DesktopBox", "Views", "MainWindow.xaml.cs");
+        main.Should().Contain("VK_C");            // Ctrl+C
+        main.Should().Contain("VK_V");            // Ctrl+V
+        main.Should().Contain("CopySelectionToClipboard");
+        main.Should().Contain("PasteOntoDesktop");
+        main.Should().Contain("SuppressCurrentKey = true");
+
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+        layer.Should().Contain("MoveOrCopyIntoFolder(paths, targetPath, move: true)", "拖到文件夹图标上=移进去");
+        // 落在磁贴上的 handler 要带上路径(否则分不清文件夹还是普通文件)
+        layer.Should().Contain("host.Drop += (_, e) => OnTileDrop(path, e)");
     }
 
     private static string ReadRepo(params string[] parts)

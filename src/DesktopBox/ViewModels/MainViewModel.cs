@@ -1229,6 +1229,112 @@ public partial class MainViewModel : ObservableObject, IDisposable
         RaiseLooseItemsChanged();
     }
 
+    /// <summary>Ctrl+C:把选中项的文件放进剪贴板(同时带上"这是我们复制的条目"标记)。
+    /// 系统图标/网址没有文件可复制,只带标记 —— 粘贴到桌面时按"移动"(出盒)处理。
+    /// 返回放进去的条目数(0 = 没选中项,或剪贴板被别的程序占用)。</summary>
+    public int CopySelectionToClipboard()
+    {
+        var items = GetSelectedItems();
+        if (items.Count == 0) return 0;
+
+        var files = items
+            .Where(ItemDragDrop.CanDragAsFile)
+            .Select(i => i.TargetPath)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        try
+        {
+            var data = new DataObject();
+            if (files.Count > 0) data.SetData(DataFormats.FileDrop, files.ToArray());
+            data.SetData(ItemDragDrop.CopiedItemsFormat, items.Select(i => i.Id).ToArray());
+            Clipboard.SetDataObject(data, copy: true);
+            Services.LogService.Info("Item.Copy", $"复制 {items.Count} 项(其中文件 {files.Count} 个)");
+            return items.Count;
+        }
+        catch (Exception ex)
+        {
+            Services.LogService.Warn("Item.Copy", Services.LogService.Truncate(ex.Message, 160));
+            return 0;
+        }
+    }
+
+    /// <summary>剪贴板里"由我们复制出来的条目 Id"集合;不是我们复制的返回 null。</summary>
+    public static List<Guid>? ReadCopiedItemIds()
+    {
+        try
+        {
+            if (!Clipboard.ContainsData(ItemDragDrop.CopiedItemsFormat)) return null;
+            if (Clipboard.GetData(ItemDragDrop.CopiedItemsFormat) is Guid[] ids) return ids.ToList();
+        }
+        catch { /* 剪贴板被占用/格式异常:当作没复制过 */ }
+        return null;
+    }
+
+    /// <summary>Ctrl+V 落在桌面上:按<b>移动</b>处理 —— 条目出盒、文件不在桌面就放过去,
+    /// 与"把条目拖出盒子"完全同一套逻辑(见 <see cref="HandleItemsDroppedOnDesktop"/>)。返回处理条数。</summary>
+    public int PasteOntoDesktop()
+    {
+        var ids = ReadCopiedItemIds();
+        if (ids is null || ids.Count == 0) return 0;
+
+        var items = ids.Select(FindItemById).OfType<BoxItem>().ToList();
+        if (items.Count == 0) return 0;
+
+        HandleItemsDroppedOnDesktop(items);
+        Services.LogService.Info("Item.Paste", $"粘贴到桌面 {items.Count} 项(移动)");
+        return items.Count;
+    }
+
+    /// <summary>把文件移动/复制进某个文件夹(拖到文件夹图标上 = 移动;粘贴进文件夹 = 复制)。
+    /// 跳过自己、以及本来就在该文件夹里的。返回成功条数。</summary>
+    public int MoveOrCopyIntoFolder(IEnumerable<string> sources, string folderPath, bool move)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath)) return 0;
+
+        var done = 0;
+        var folder = folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        foreach (var source in sources)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(source)) continue;
+                if (!File.Exists(source) && !Directory.Exists(source)) continue;
+
+                var srcFull = Path.GetFullPath(source).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(srcFull, folder, StringComparison.OrdinalIgnoreCase)) continue;   // 拖到自己身上
+                if (srcFull.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;  // 已在里面
+
+                var name = Path.GetFileName(srcFull);
+                var dest = UniqueSibling(Path.Combine(folder, name));
+                if (Directory.Exists(srcFull))
+                {
+                    if (move) Directory.Move(srcFull, dest);
+                    else CopyDirectory(srcFull, dest);
+                }
+                else if (move)
+                {
+                    File.Move(srcFull, dest);
+                }
+                else
+                {
+                    File.Copy(srcFull, dest, overwrite: false);
+                }
+
+                done++;
+                Services.LogService.Info("Item.IntoFolder", $"{(move ? "移动" : "复制")} {name} -> {folder}");
+            }
+            catch (Exception ex)
+            {
+                Services.LogService.Warn("Item.IntoFolder", Services.LogService.Truncate(ex.Message, 160));
+            }
+        }
+
+        if (done > 0) RaiseLooseItemsChanged();
+        return done;
+    }
+
     /// <summary>重名时在文件名后加 (2)/(3)…,不覆盖桌面上已有的同名文件。</summary>
     private static string UniqueSibling(string path)
     {

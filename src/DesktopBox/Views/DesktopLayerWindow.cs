@@ -491,7 +491,7 @@ public sealed class DesktopLayerWindow : IDisposable
             e.Handled = true;
         };
         host.DragOver += OnTileDragOver;
-        host.Drop += OnTileDrop;
+        host.Drop += (_, e) => OnTileDrop(path, e);   // 闭包带上该磁贴的路径:落在文件夹上要移进去
         host.PreviewMouseLeftButtonDown += (_, e) =>
         {
             _dragStart = e.GetPosition(null);
@@ -1314,14 +1314,27 @@ public sealed class DesktopLayerWindow : IDisposable
         e.Handled = true;
     }
 
-    /// <summary>落在图标上的拖放:我们自己就是这块区域的宿主,不处理的话系统会一路显示"禁止"光标。
-    /// 按拖放效果把文件放进桌面目录,然后重画。</summary>
-    private void OnTileDrop(object sender, DragEventArgs e)
+    /// <summary>落在图标上的拖放。<b>落在文件夹图标上 = 移进那个文件夹</b>(用户要求:
+    /// 拖到文件夹上面要"收纳"进去);落在其它文件图标上仍按"放到桌面"处理。
+    /// 落在两个图标之间的空白处不经过这里(那是排序/落桌面)。</summary>
+    private void OnTileDrop(string targetPath, DragEventArgs e)
     {
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0)
         {
             e.Effects = DragDropEffects.None;
             e.Handled = true;
+            return;
+        }
+
+        // 文件夹图标:移进去(系统图标/网址不受影响;自己拖到自己身上会被跳过)
+        if (targetPath.Length > 0 && Directory.Exists(targetPath))
+        {
+            var moved = _vm.MoveOrCopyIntoFolder(paths, targetPath, move: true);
+            Services.LogService.Info("DesktopLayer.DropOnFolder",
+                $"拖到文件夹 {Services.LogService.Truncate(targetPath)}:移进 {moved} 项");
+            e.Effects = moved > 0 ? DragDropEffects.Move : DragDropEffects.None;
+            e.Handled = true;
+            Update();
             return;
         }
 

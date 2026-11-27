@@ -480,17 +480,57 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>全局按键:我们的窗口是子窗口、拿不到键盘焦点,所以 Delete 只能从钩子进来。
-    /// 只认"光标正压在我们的界面(盒子/桌面图标/桌面空白)上"的情况,免得在别的程序里按 Delete 误删。</summary>
+    private const int VK_C = 0x43;
+    private const int VK_V = 0x56;
+
+    /// <summary>全局按键:我们的窗口是子窗口、拿不到键盘焦点,所以 Delete / Ctrl+C / Ctrl+V
+    /// 只能从钩子进来。每条都先确认"光标压在我们的界面/桌面上",免得在别的程序里误触发。
+    ///
+    /// Ctrl+V 是唯一会<b>吞掉</b>按键的地方:剪贴板里是"从盒子复制的条目"、又粘贴在桌面上时,
+    /// 必须由我们处理(移动),否则 explorer 会执行一次原生复制,弹出"源文件名和目标文件名相同"。</summary>
     private void OnGlobalKeyDown(int virtualKey)
     {
-        if (virtualKey != Native.LowLevelKeyboardHook.VK_DELETE) return;
-
         try
         {
+            if (virtualKey == Native.LowLevelKeyboardHook.VK_DELETE)
+            {
+                var c = Forms.Cursor.Position;
+                if (DeleteBoxSelectionAt(c.X, c.Y)) return;
+                _layerWindow?.TryDeleteSelectionAt(c.X, c.Y);
+                return;
+            }
+
+            if ((Forms.Control.ModifierKeys & Forms.Keys.Control) == 0) return;
+            if (virtualKey != VK_C && virtualKey != VK_V) return;
+
             var cursor = Forms.Cursor.Position;
-            if (DeleteBoxSelectionAt(cursor.X, cursor.Y)) return;
-            _layerWindow?.TryDeleteSelectionAt(cursor.X, cursor.Y);
+            var hwnd = Native.User32.WindowFromPoint(cursor.X, cursor.Y);
+            if (hwnd == IntPtr.Zero) return;
+
+            var cls = Native.User32.GetClassNameOf(hwnd);
+            Native.User32.GetWindowThreadProcessId(hwnd, out var pid);
+            var overOurs = pid == (uint)Environment.ProcessId;
+            var overDesktop = cls is "SHELLDLL_DefView" or "Progman" or "WorkerW"
+                              || cls.Contains("SysListView32", StringComparison.Ordinal);
+
+            if (virtualKey == VK_C)
+            {
+                // 只有光标压在我们自己的界面上,才把 Ctrl+C 当"复制盒子条目";否则原样放行给别的程序
+                if (!overOurs) return;
+                var copied = _vm.CopySelectionToClipboard();
+                Services.LogService.Info("MainWindow.Copy", $"Ctrl+C 在界面上:复制 {copied} 项");
+                return;
+            }
+
+            // Ctrl+V:只有剪贴板里是"我们复制的条目"才接管 —— 普通复制粘贴完全不碰
+            if (MainViewModel.ReadCopiedItemIds() is null) return;
+            if (!overDesktop) return;   // 只在桌面上接管(粘贴到文件夹仍走 explorer 的原生复制)
+            var pasted = _vm.PasteOntoDesktop();
+            if (pasted > 0 && _keyboardHook is not null)
+            {
+                _keyboardHook.SuppressCurrentKey = true;   // 吞掉,别让 explorer 再原生复制一次
+                Services.LogService.Info("MainWindow.Paste", $"Ctrl+V 桌面:移动 {pasted} 项(已吞掉原生粘贴)");
+            }
         }
         catch (Exception ex)
         {

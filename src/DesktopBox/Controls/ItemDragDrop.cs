@@ -58,6 +58,14 @@ public static class ItemDragDrop
 
     public const string DragSourceItemFormat = "DesktopBox.ItemId";
 
+    /// <summary>Ctrl+C 时放进剪贴板的"这是我们复制出来的条目"标记(条目 Id 数组)。
+    ///
+    /// 粘贴时要靠它区分两种情况:
+    /// ① 剪贴板里有这个格式 → 粘贴到桌面 = <b>移动</b>(出盒 + 落到桌面),由我们处理并吞掉 Ctrl+V;
+    /// ② 没有(普通文件复制) → 完全交给 explorer,行为不变。
+    /// 这样既能让"盒子→桌面"像拖拽一样是移动,又不会误伤系统里正常的复制粘贴。</summary>
+    public const string CopiedItemsFormat = "DesktopBox.CopiedItemIds";
+
     /// <summary>多选拖拽时的整组 id(第一个是鼠标按住的那个)。落点优先看它,没有才退回单个。</summary>
     public const string DragSourceItemsFormat = "DesktopBox.ItemIds";
 
