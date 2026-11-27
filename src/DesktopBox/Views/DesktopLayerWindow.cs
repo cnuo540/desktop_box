@@ -231,6 +231,11 @@ public sealed class DesktopLayerWindow : IDisposable
 
     // ---- 框选状态 ----
     private Border? _marquee;
+    /// <summary>拖动时显示"松手放到这里"的插入横杠。</summary>
+    private Border? _insertBar;
+    private System.Windows.Threading.DispatcherTimer? _insertBarTimer;
+    /// <summary>当前哪些磁贴是文件夹(拖动时判定"落在文件夹上";避免每帧查磁盘)。</summary>
+    private readonly HashSet<string> _folderPaths = new(StringComparer.OrdinalIgnoreCase);
     private Point _marqueeOrigin;
     private bool _marqueeSelecting;
     /// <summary>拉框期间把窗口区域铺满整屏了没。只有"真的拖动起来"才铺:按下的那一下必须留给桌面。</summary>
@@ -347,6 +352,11 @@ public sealed class DesktopLayerWindow : IDisposable
         _cells.Clear();
         _tilesByPath.Clear();
         _labels.Clear();
+        // 画布被清空 → 这两个装饰元素也随之消失,字段必须一起置空,
+        // 否则下次拖动/框选会误以为"还挂在那儿"而不再重建(横杠只第一次显示的根因)。
+        _insertBar = null;
+        _marquee = null;
+        _folderPaths.Clear();
 
         if (!_tilesEnabled)
         {
@@ -376,6 +386,8 @@ public sealed class DesktopLayerWindow : IDisposable
             Canvas.SetTop(tile, cell.Y);
             _canvas.Children.Add(tile);
             _tilesByPath[cell.Path] = tile;
+            // 记下哪些是文件夹磁贴:拖动时"落在文件夹上"要用它判定(每次轮询都查磁盘太浪费)
+            if (Directory.Exists(cell.Path)) _folderPaths.Add(cell.Path);
             _cells.Add(((int)Math.Floor(cell.X), (int)Math.Floor(cell.Y),
                         (int)Math.Ceiling(_cellW), (int)Math.Ceiling(_cellH)));
         }
@@ -491,7 +503,19 @@ public sealed class DesktopLayerWindow : IDisposable
             e.Handled = true;
         };
         host.DragOver += OnTileDragOver;
-        host.Drop += (_, e) => OnTileDrop(path, e);   // 闭包带上该磁贴的路径:落在文件夹上要移进去
+        host.Drop += (_, e) => OnTileDrop(host, path, e);   // 闭包带上该磁贴的路径:落在文件夹上要移进去
+
+        // 文件夹磁贴:拖进来时显著高亮(系统只给个很弱的"+"号,用户看不出能不能放进去)
+        if (Directory.Exists(path))
+        {
+            host.DragEnter += (_, _) =>
+            {
+                host.Background = FolderDropBrush;
+                host.BorderBrush = SelectedBorderBrush;
+                host.BorderThickness = new Thickness(3);
+            };
+            host.DragLeave += (_, _) => RestoreTileChrome(host);
+        }
         host.PreviewMouseLeftButtonDown += (_, e) =>
         {
             _dragStart = e.GetPosition(null);
@@ -1151,6 +1175,151 @@ public sealed class DesktopLayerWindow : IDisposable
 
     /// <summary>把小图标拖出去:带上 FileDrop,于是拖进盒子就能被收纳(盒子按 FileDrop 收),
     /// 拖进资源管理器窗口也是正常的移动/复制。选中多项时整组一起拖。</summary>
+    /// <summary>文件夹磁贴:拖进来时的高亮底色(应用强调色的半透明版)。</summary>
+    private static readonly Brush FolderDropBrush = Frozen(Color.FromArgb(0x66, 0x00, 0xB4, 0xA6));
+
+    /// <summary>"放到两个图标之间"的插入指示横杠。</summary>
+    private static readonly Brush InsertBarBrush = Frozen(Color.FromArgb(0xEE, 0x00, 0xB4, 0xA6));
+
+    /// <summary>把磁贴的底色/描边恢复成"选中或普通"的样子(拖走/highlight 结束后调用)。</summary>
+    private void RestoreTileChrome(Border host)
+    {
+        host.BorderThickness = new Thickness(1);
+        if (_selectedTiles.Contains(host))
+        {
+            host.Background = SelectedBrush;
+            host.BorderBrush = SelectedBorderBrush;
+        }
+        else
+        {
+            host.Background = Brushes.Transparent;
+            host.BorderBrush = Brushes.Transparent;
+        }
+    }
+
+    /// <summary>拖动期间在网格间隙上画一条横杠,告诉用户"松手会放到这里"。
+    ///
+    /// 横杠要给足"瞄准"的余量:图标挨得近时,一条细线夹在中间根本看不清 ——
+    /// 所以画 6px 厚、左右各外扩半格缝隙、并带一层同色发光。
+    /// 位置取"鼠标最近的行边界"(即两个图标之间的那条缝),与落点判定
+    /// (<see cref="Models.DesktopLayerLayout.NearestCell"/>) 始终一致。</summary>
+    /// <summary>文件夹磁贴"真正算放进去"的区域 = 磁贴矩形<b>内缩 20%</b>。
+    ///
+    /// 磁贴是占满整个格子的(Width=cellW, Height=cellH),不内缩的话格子之间的缝隙也归文件夹,
+    /// "拖到两个图标之间"永远命中文件夹 → 插入横杠根本没机会显示(用户反馈)。
+    /// 内缩后:图标中心区 = 放进去;格子边缘/缝隙 = 换位置(横杠)。
+    /// 挖洞与命中判定都走这一个方法,保证"看到什么就是什么"。</summary>
+    private Rect FolderHitRect(Border host)
+    {
+        var r = ScreenRectOf(host);
+        if (r.IsEmpty || r.Width <= 0 || r.Height <= 0) return r;
+        r.Inflate(-r.Width * 0.2, -r.Height * 0.2);
+        return r;
+    }
+
+    /// <summary>光标是否正压在某块<b>文件夹</b>磁贴的可放入区域上。</summary>
+    private bool IsOverFolderTile(int screenX, int screenY)
+    {
+        foreach (var path in _folderPaths)
+        {
+            if (!_tilesByPath.TryGetValue(path, out var host)) continue;
+            var r = FolderHitRect(host);
+            if (r.IsEmpty) continue;
+            if (screenX >= r.Left && screenX < r.Right && screenY >= r.Top && screenY < r.Bottom) return true;
+        }
+        return false;
+    }
+
+    private void UpdateInsertBar(int screenX, int screenY)
+    {
+        try
+        {
+            // 光标在文件夹磁贴上 → 落点已经明确了(磁贴高亮 = "会添加进去"),
+            // 此时再画插入横杠会让两个提示打架,而且用户也说"只识别了添加"。
+            if (IsOverFolderTile(screenX, screenY))
+            {
+                HideInsertBar();
+                return;
+            }
+
+            var p = ToCanvasPoint(screenX, screenY);
+            var col = (int)Math.Round((p.X - EdgePadding) / _cellW);
+            // 光标在格子内部的位置(0..1):靠上沿就吸到上边界,靠下沿吸到下边界 ——
+            // 这样"两个图标之间"那一带都能被识别成插入位置,而不是只有正中一条线。
+            var rawRow = (p.Y - EdgePadding) / _cellH;
+            var frac = rawRow - Math.Floor(rawRow);
+            var row = frac < 0.5 ? Math.Floor(rawRow) : Math.Ceiling(rawRow);
+
+            var x = EdgePadding + col * _cellW;
+            var y = EdgePadding + row * _cellH;
+
+            if (_insertBar is null)
+            {
+                _insertBar = new Border
+                {
+                    Height = 6,
+                    CornerRadius = new CornerRadius(3),
+                    Background = InsertBarBrush,
+                    IsHitTestVisible = false,
+                    Effect = new DropShadowEffect
+                    {
+                        Color = Color.FromArgb(0xFF, 0x00, 0xB4, 0xA6),
+                        BlurRadius = 10,
+                        ShadowDepth = 0,
+                        Opacity = 0.85
+                    }
+                };
+                _canvas.Children.Add(_insertBar);
+            }
+
+            // 左右各外扩 6px:图标间距小的时候,横杠仍能从两侧露出来
+            Canvas.SetLeft(_insertBar, x - 6);
+            Canvas.SetTop(_insertBar, y - 3);
+            _insertBar.Width = _cellW + 12;
+            _insertBar.Visibility = Visibility.Visible;
+        }
+        catch { /* 指示条只是锦上添花,失败不影响拖动 */ }
+    }
+
+    private void HideInsertBar()
+    {
+        // 必须"从画布移除 + 置空",不能只设 Collapsed:
+        // Build() 里有 _canvas.Children.Clear(),横杠会跟着被清掉,但字段还指着旧对象 ——
+        // 下一次拖动时 if (_insertBar is null) 不成立,就再也不会挂回画布上
+        // (现象:第一次拖动能看到横杠,后面全都不显示)。
+        if (_insertBar is null) return;
+        try { _canvas.Children.Remove(_insertBar); } catch { }
+        _insertBar = null;
+    }
+
+    /// <summary>拖动开始:定时轮询光标位置更新插入横杠(覆盖层归它自己管,我们收不到 DragOver)。</summary>
+    private void StartInsertBarTracking()
+    {
+        _insertBarTimer ??= new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(16)
+        };
+        _insertBarTimer.Tick -= OnInsertBarTick;
+        _insertBarTimer.Tick += OnInsertBarTick;
+        _insertBarTimer.Start();
+    }
+
+    private void OnInsertBarTick(object? sender, EventArgs e)
+    {
+        try { var p = System.Windows.Forms.Cursor.Position; UpdateInsertBar(p.X, p.Y); }
+        catch { }
+    }
+
+    private void StopInsertBarTracking()
+    {
+        if (_insertBarTimer is not null)
+        {
+            _insertBarTimer.Stop();
+            _insertBarTimer.Tick -= OnInsertBarTick;
+        }
+        HideInsertBar();
+    }
+
     private void StartDrag(FrameworkElement source, string path)
     {
         var dragged = _selectedPaths.Contains(path) && _selectedPaths.Count > 1
@@ -1158,6 +1327,20 @@ public sealed class DesktopLayerWindow : IDisposable
             : new List<string> { path };
 
         var boxBounds = Controls.DesktopDropOverlay.OccupiedBoxRects(_vm.Boxes);
+
+        // 把 loose 的**文件夹**磁贴也挖出洞来:覆盖层是全屏置顶的,不挖的话"拖到文件夹"的落点
+        // 会被它截走 → 被当成"拖到桌面" → 文件只是换个格子,根本没进文件夹(真实反馈)。
+        // 只挖文件夹,而且只挖它的**中心区**(与 IsOverFolderTile 同一块矩形):
+        // 格子边缘和图标缝隙仍归覆盖层 = 换位置,插入横杠才有显示空间。
+        foreach (var (tilePath, host) in _tilesByPath)
+        {
+            if (!Directory.Exists(tilePath)) continue;
+            var tileRect = FolderHitRect(host);
+            if (tileRect.IsEmpty) continue;
+            tileRect.Inflate(-8, -8);   // 抵消 BuildExclusionRects 对 excludedBounds 的 +8 外扩
+            if (tileRect.Width > 4 && tileRect.Height > 4) boxBounds.Add(tileRect);
+        }
+
         using var desktopDrop = Controls.DesktopDropOverlay.TryCreate(boxBounds);
 
         // 覆盖层就位才带原生 FileDrop:它既让拖给微信/资源管理器能被识别(v1.7.37),
@@ -1166,6 +1349,7 @@ public sealed class DesktopLayerWindow : IDisposable
         if (desktopDrop is not null) data.SetData(DataFormats.FileDrop, dragged.ToArray());
         var droppedOnDesktop = false;
         (double X, double Y)? dropPoint = null;
+        StartInsertBarTracking();   // 拖动期间显示"松手放到这里"的横杠
         try
         {
             var effect = DragDrop.DoDragDrop(source, data, DragDropEffects.Copy | DragDropEffects.Move);
@@ -1182,6 +1366,7 @@ public sealed class DesktopLayerWindow : IDisposable
         }
         finally
         {
+            StopInsertBarTracking();
             if (droppedOnDesktop && dropPoint is { } point) RememberPositions(path, dragged, point.X, point.Y);
             Update();       // 拖走/复制之后桌面上的东西可能变了
         }
@@ -1202,6 +1387,38 @@ public sealed class DesktopLayerWindow : IDisposable
 
             var maxX = Math.Max(EdgePadding, _canvas.Width - EdgePadding - _cellW);
             var maxY = Math.Max(EdgePadding, _canvas.Height - BottomReserve - _cellH);
+
+            // 单文件:落到"鼠标下的那个格子",那格被占就<b>与占用者交换</b> —— explorer 的直觉。
+            // 多选:仍用 Snap 找空格,避免互相踩。
+            if (paths.Count == 1)
+            {
+                var target = Models.DesktopLayerLayout.NearestCell(anchorX, anchorY, _cellW, _cellH, EdgePadding, maxX, maxY);
+                string? occupantPath = null;
+                foreach (var c in _arranged)
+                {
+                    if (string.Equals(c.Path, paths[0], StringComparison.OrdinalIgnoreCase)) continue;
+                    if (Math.Abs(c.X - target.X) < 1 && Math.Abs(c.Y - target.Y) < 1)
+                    {
+                        occupantPath = c.Path;
+                        break;
+                    }
+                }
+
+                var origin = CurrentOrigin(paths[0]);
+                if (occupantPath is not null)
+                {
+                    _positions[occupantPath] = (origin.X, origin.Y);   // 交换:占用者去被拖项的原格
+                    Services.LogService.Info("DesktopLayer.Swap",
+                        $"与 {Services.LogService.Truncate(Path.GetFileName(occupantPath))} 交换位置");
+                }
+
+                _positions[paths[0]] = target;
+                SavePositions();
+                Services.LogService.Info("DesktopLayer.Move",
+                    $"path={Services.LogService.Truncate(paths[0])} -> ({target.X:F0},{target.Y:F0}) 交换={occupantPath is not null}");
+                return;
+            }
+
             var taken = _arranged
                 .Where(c => !paths.Any(p => string.Equals(p, c.Path, StringComparison.OrdinalIgnoreCase)))
                 .Select(c => (c.X, c.Y))
@@ -1317,8 +1534,10 @@ public sealed class DesktopLayerWindow : IDisposable
     /// <summary>落在图标上的拖放。<b>落在文件夹图标上 = 移进那个文件夹</b>(用户要求:
     /// 拖到文件夹上面要"收纳"进去);落在其它文件图标上仍按"放到桌面"处理。
     /// 落在两个图标之间的空白处不经过这里(那是排序/落桌面)。</summary>
-    private void OnTileDrop(string targetPath, DragEventArgs e)
+    private void OnTileDrop(Border host, string targetPath, DragEventArgs e)
     {
+        RestoreTileChrome(host);   // 放下后立刻去掉高亮(DragLeave 在 Drop 之后不一定触发)
+
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0)
         {
             e.Effects = DragDropEffects.None;

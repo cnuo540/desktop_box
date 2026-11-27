@@ -105,6 +105,22 @@ internal static class DesktopLayerLayout
         return (padding + column * cellW, padding + row * cellH);
     }
 
+    /// <summary>只把坐标吸附到<b>最近的格子</b>,不管有没有被占(由调用方决定是"交换"还是"另找")。
+    /// 用于单文件拖动:用户拖到哪个格子就落到哪个格子 —— 被占时与占用者交换,
+    /// 而不是像 <see cref="Snap"/> 那样往外圈找空格(那会让文件"跳"到别处,看起来像没反应)。</summary>
+    public static (double X, double Y) NearestCell(
+        double x, double y, double cellWidth, double cellHeight, double padding, double maxX, double maxY)
+    {
+        var cellW = Math.Max(1, cellWidth);
+        var cellH = Math.Max(1, cellHeight);
+        var maxColumn = Math.Max(0, (int)Math.Floor((maxX - padding) / cellW));
+        var maxRow = Math.Max(0, (int)Math.Floor((maxY - padding) / cellH));
+
+        var column = Math.Clamp((int)Math.Round((x - padding) / cellW, MidpointRounding.AwayFromZero), 0, maxColumn);
+        var row = Math.Clamp((int)Math.Round((y - padding) / cellH, MidpointRounding.AwayFromZero), 0, maxRow);
+        return (padding + column * cellW, padding + row * cellH);
+    }
+
     private static bool IsTaken(IReadOnlyCollection<(double X, double Y)> taken, double x, double y)
         => taken is not null && taken.Any(t => Math.Abs(t.X - x) < 1 && Math.Abs(t.Y - y) < 1);
 

@@ -702,7 +702,130 @@ public class DesktopChangeHandlingTests
         var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
         layer.Should().Contain("MoveOrCopyIntoFolder(paths, targetPath, move: true)", "拖到文件夹图标上=移进去");
         // 落在磁贴上的 handler 要带上路径(否则分不清文件夹还是普通文件)
-        layer.Should().Contain("host.Drop += (_, e) => OnTileDrop(path, e)");
+        layer.Should().Contain("host.Drop += (_, e) => OnTileDrop(host, path, e)");
+    }
+
+    [Fact]
+    public void DraggingOntoAFolderTile_ExcludesItFromTheFullscreenOverlay()
+    {
+        // 真实反馈:桌面上拖文件到文件夹图标上没反应。根因是 StartDrag 建的全屏覆盖层
+        // 只挖了盒子的洞(excluded=1),文件夹磁贴被它盖住 → 落点被截走当成"拖到桌面"。
+        // 修法:把 loose 文件夹磁贴的矩形也加进 exclusion;普通磁贴不挖(保持"换位置"行为)。
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+
+        layer.Should().Contain("把 loose 的**文件夹**磁贴也挖出洞来");
+        layer.Should().Contain("if (!Directory.Exists(tilePath)) continue;");
+        layer.Should().Contain("boxBounds.Add(tileRect)");
+        // 落点处理必须带路径(否则分不清文件夹还是普通文件)
+        layer.Should().Contain("host.Drop += (_, e) => OnTileDrop(host, path, e)");
+        layer.Should().Contain("MoveOrCopyIntoFolder(paths, targetPath, move: true)");
+    }
+
+    [Fact]
+    public void DropFeedback_ShowsFolderHighlightAndInsertBar()
+    {
+        // 用户要求:①拖到文件夹上要有明显提示(系统那个"+"太弱);②拖到两图标之间要有一条横杠。
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+
+        layer.Should().Contain("FolderDropBrush", "文件夹磁贴要高亮");
+        layer.Should().Contain("host.DragEnter += (_, _) =>", "DragEnter 时高亮");
+        layer.Should().Contain("RestoreTileChrome(host)", "DragLeave/Drop 后恢复");
+        layer.Should().Contain("InsertBarBrush", "插入横杠");
+        layer.Should().Contain("UpdateInsertBar(int screenX, int screenY)");
+        layer.Should().Contain("StartInsertBarTracking();", "拖动开始就要跟踪");
+        layer.Should().Contain("StopInsertBarTracking();", "拖动结束必须收掉");
+    }
+
+    [Fact]
+    public void SingleFileDrop_LandsOnTheHoveredCellAndSwapsWhenOccupied()
+    {
+        // 用户反馈"拖到两图标之间没移动到他们之间":原来 Snap 会往外圈找空格,文件像"跳走"。
+        // 现在单文件 = 落到鼠标下的格子,被占就与占用者交换(explorer 直觉)。多选仍走 Snap。
+        var layout = ReadRepo("src", "DesktopBox", "Models", "DesktopLayerLayout.cs");
+        layout.Should().Contain("public static (double X, double Y) NearestCell(");
+
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+        layer.Should().Contain("if (paths.Count == 1)");
+        layer.Should().Contain("Models.DesktopLayerLayout.NearestCell(");
+        layer.Should().Contain("_positions[occupantPath] = (origin.X, origin.Y);");
+        layer.Should().Contain("DesktopLayer.Swap");
+    }
+
+    [Fact]
+    public void MoveIntoFolder_ReportsFailureSoItCannotLookLikeNoOp()
+    {
+        // 真实故障:文件被 Excel 占用时 File.Move 抛共享冲突,日志只有一行 Warn,
+        // 界面上却是"拖上去有 + 号、松手没反应" → 用户判定"功能没实现"。
+        // 现在失败必须弹提示(被占用用专门文案),成功也回一句"已移进 N 项"。
+        var vm = ReadRepo("src", "DesktopBox", "ViewModels", "MainViewModel.cs");
+        vm.Should().Contain("dialog.move.inUse");
+        vm.Should().Contain("(ex.HResult & 0xFFFF) is 32 or 33", "共享冲突要单独识别");
+        vm.Should().Contain("dialog.move.done");
+        vm.Should().Contain("dialog.copy.done");
+
+        var zh = ReadRepo("src", "DesktopBox", "Resources", "Strings.zh-CN.xaml");
+        var en = ReadRepo("src", "DesktopBox", "Resources", "Strings.en-US.xaml");
+        foreach (var key in new[] { "dialog.move.inUse", "dialog.copy.failed", "dialog.move.done", "dialog.copy.done" })
+        {
+            zh.Should().Contain($"x:Key=\"{key}\"", $"中文缺 {key}");
+            en.Should().Contain($"x:Key=\"{key}\"", $"英文缺 {key}");
+        }
+    }
+
+    [Fact]
+    public void NearestCell_SnapsWithoutSearchingForFreeSlots()
+    {
+        // 纯逻辑:贴到最近格,不管有没有被占(交换由调用方负责)
+        var a = DesktopLayerLayout.NearestCell(10, 10, 100, 120, 10, 1000, 800);
+        a.Should().Be((10, 10));
+
+        var b = DesktopLayerLayout.NearestCell(155, 10, 100, 120, 10, 1000, 800);   // 第2列附近 → 110
+        b.Should().Be((110, 10));
+
+        var c = DesktopLayerLayout.NearestCell(-999, -999, 100, 120, 10, 1000, 800); // 夹回左上角
+        c.Should().Be((10, 10));
+
+        var d = DesktopLayerLayout.NearestCell(99999, 99999, 100, 120, 10, 1000, 800); // 夹回右下角
+        d.X.Should().BeLessThanOrEqualTo(1000);
+        d.Y.Should().BeLessThanOrEqualTo(800);
+    }
+
+    [Fact]
+    public void OverlayDecorationsAreResetWhenTheCanvasIsRebuilt()
+    {
+        // 真实故障:插入横杠只有第一次拖动能看到,之后全都不显示。
+        // 根因:Build() 里 _canvas.Children.Clear() 把它从画布上抹掉了,但字段还指着旧对象,
+        // 下一次 UpdateInsertBar 里 `if (_insertBar is null)` 不成立 → 再也不会挂回画布。
+        // 约束:HideInsertBar 必须"移除 + 置空";Build 清空画布后必须把装饰字段一起置空。
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+
+        layer.Should().Contain("try { _canvas.Children.Remove(_insertBar); } catch { }");
+        layer.Should().Contain("_insertBar = null;");
+        // Build 里清画布之后必须把两个装饰字段置空
+        var buildIndex = layer.IndexOf("private void Build(IReadOnlyList<string> paths)", StringComparison.Ordinal);
+        buildIndex.Should().BeGreaterThan(0);
+        var buildBody = layer.Substring(buildIndex, Math.Min(700, layer.Length - buildIndex));
+        buildBody.Should().Contain("_canvas.Children.Clear();");
+        buildBody.Should().Contain("_insertBar = null;");
+        buildBody.Should().Contain("_marquee = null;");
+        // 不能只设 Collapsed 就以为收拾干净了
+        layer.Should().NotContain("_insertBar.Visibility = Visibility.Collapsed;");
+    }
+
+    [Fact]
+    public void InsertBarAndFolderHighlight_AreMutuallyExclusive()
+    {
+        // 真实反馈:横杠和"添加到文件夹"同时显示 → 松手只识别了添加,用户看不懂落点。
+        // 约束:光标在文件夹磁贴上时,插入横杠必须隐藏(落点已由磁贴高亮表明)。
+        var layer = ReadRepo("src", "DesktopBox", "Views", "DesktopLayerWindow.cs");
+
+        layer.Should().Contain("private bool IsOverFolderTile(int screenX, int screenY)");
+        layer.Should().Contain("if (IsOverFolderTile(screenX, screenY))");
+        layer.Should().Contain("HideInsertBar();");
+        // 文件夹集合在 Build 里填充/清空,拖动时不再查磁盘
+        layer.Should().Contain("_folderPaths.Add(cell.Path)");
+        layer.Should().Contain("_folderPaths.Clear();");
+        layer.Should().Contain("if (Directory.Exists(cell.Path)) _folderPaths.Add(cell.Path);");
     }
 
     private static string ReadRepo(params string[] parts)

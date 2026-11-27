@@ -1288,13 +1288,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>把文件移动/复制进某个文件夹(拖到文件夹图标上 = 移动;粘贴进文件夹 = 复制)。
-    /// 跳过自己、以及本来就在该文件夹里的。返回成功条数。</summary>
+    /// 跳过自己、以及本来就在该文件夹里的。返回成功条数。
+    ///
+    /// **成功与失败都要给反馈**:拖上去时系统显示的是"+"号,松手若静默失败(最常见是文件正被
+    /// Excel 等程序占用 → ERROR_SHARING_VIOLATION),用户就会以为"功能没实现"。</summary>
     public int MoveOrCopyIntoFolder(IEnumerable<string> sources, string folderPath, bool move)
     {
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath)) return 0;
 
         var done = 0;
+        var failed = 0;
+        var inUse = false;
         var folder = folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var folderName = Path.GetFileName(folder);
+
         foreach (var source in sources)
         {
             try
@@ -1327,8 +1334,27 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
             catch (Exception ex)
             {
-                Services.LogService.Warn("Item.IntoFolder", Services.LogService.Truncate(ex.Message, 160));
+                failed++;
+                // 共享冲突 = 文件正被别的程序打开(最常见的"拖进去没反应")
+                if (ex is IOException && (ex.HResult & 0xFFFF) is 32 or 33) inUse = true;
+                Services.LogService.Warn("Item.IntoFolder",
+                    $"{Path.GetFileName(source)}: {ex.GetType().Name} {Services.LogService.Truncate(ex.Message, 120)}");
             }
+        }
+
+        // 失败优先报(否则用户看到的仍然是"没反应");全成功时报一句"已移进/复制进 N 项"确认落到了哪儿
+        if (failed > 0)
+        {
+            var key = inUse ? "dialog.move.inUse"
+                : move ? "dialog.move.failed" : "dialog.copy.failed";
+            var text = inUse ? _localizer[key]
+                : string.Format(_localizer[key], Services.LogService.Truncate(failed.ToString() + " 项失败", 60));
+            ToastWindow.Show(text, opacity: 0.9);
+        }
+        else if (done > 0)
+        {
+            ToastWindow.Show(string.Format(_localizer[move ? "dialog.move.done" : "dialog.copy.done"], folderName, done),
+                opacity: 0.5);
         }
 
         if (done > 0) RaiseLooseItemsChanged();

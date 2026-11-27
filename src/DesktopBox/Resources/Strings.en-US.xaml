@@ -83,6 +83,11 @@
     <s:String x:Key="dialog.delete.failed">Couldn't delete (error {0})</s:String>
     <s:String x:Key="dialog.delete.alreadyGone">The file no longer exists; its box reference was removed</s:String>
     <s:String x:Key="dialog.delete.virtualOnly">Removed {0} system icon(s)/link(s) from the box (virtual items — no file was deleted)</s:String>
+    <s:String x:Key="dialog.move.inUse">Move failed: the file is in use by another program (close it and retry)</s:String>
+    <s:String x:Key="dialog.move.failed">Move failed: {0}</s:String>
+    <s:String x:Key="dialog.copy.failed">Copy failed: {0}</s:String>
+    <s:String x:Key="dialog.move.done">Moved {1} item(s) into "{0}"</s:String>
+    <s:String x:Key="dialog.copy.done">Copied {1} item(s) into "{0}"</s:String>
     <s:String x:Key="lang.auto">Auto (follow system)</s:String>
     <s:String x:Key="lang.zh-CN">简体中文</s:String>
     <s:String x:Key="lang.en-US">English</s:String>
