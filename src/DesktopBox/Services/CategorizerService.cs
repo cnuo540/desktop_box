@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.IO;
-using DesktopBox.Native;
 
 namespace DesktopBox.Services;
 
@@ -34,9 +33,11 @@ public class CategorizerService : ICategorizerService
     };
 
     private static readonly HashSet<string> Docs = new()
-    { ".doc", ".docx", ".pdf", ".txt", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".rtf", ".md", ".wps", ".et", ".dps", ".odt", ".ods", ".odp",
+    { ".doc", ".docx", ".docm", ".pdf", ".txt", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".pptm",
+      ".csv", ".rtf", ".md", ".wps", ".et", ".dps", ".odt", ".ods", ".odp",
       // 代码/脚本/标记/配置文件:归「文档」。开发者桌面常见,否则会落到「其他」标签找不到。
-      ".py", ".pyw", ".js", ".mjs", ".ts", ".jsx", ".tsx", ".java", ".jar", ".class",
+      // 注意 .ts 在这里<b>没有</b>收录:它优先当视频(MPEG-TS),见 Vids。
+      ".py", ".pyw", ".js", ".mjs", ".jsx", ".tsx", ".java", ".jar", ".class",
       ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".cs", ".go", ".rs", ".rb", ".php",
       ".swift", ".kt", ".kts", ".scala", ".sh", ".bash", ".zsh", ".lua", ".pl", ".pm",
       ".r", ".m", ".mm", ".dart", ".vue", ".svelte",
@@ -66,14 +67,9 @@ public class CategorizerService : ICategorizerService
             if (Directory.Exists(path)) return FolderCat;
 
             var ext = Path.GetExtension(path).ToLowerInvariant();
-            // 快捷方式独立成类:只有指向文件夹的快捷方式仍归「文件夹」,其余一律归「快捷方式」
-            if (ext == ".lnk")
-            {
-                var target = ShellLinkResolver.ResolveTarget(path);
-                if (!string.IsNullOrEmpty(target) && Directory.Exists(target))
-                    return FolderCat;
-                return Shortcut;
-            }
+            // 快捷方式一律归「快捷方式」:不再按目标类型分流 —— 指向文件夹的快捷方式也是快捷方式
+            // (用户要求 .lnk 全部落在快捷方式标签)。顺带省掉每个 .lnk 一次 WScript.Shell COM 解析。
+            if (ext == ".lnk") return Shortcut;
             if (Apps.Contains(ext)) return Program;
             return ByExt(ext);
         }

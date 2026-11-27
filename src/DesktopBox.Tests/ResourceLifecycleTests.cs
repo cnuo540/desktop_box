@@ -96,11 +96,15 @@ public class ResourceLifecycleTests
     }
 
     [Fact]
-    public void CategorizerService_DelegatesShortcutResolutionToShellLinkResolver()
+    public void CategorizerService_DoesNotResolveShortcutsForCategorization()
     {
+        // .lnk 一律归「快捷方式」(不再按目标类型分流),所以分类器里不该再有 COM 解析 ——
+        // 既省掉每个 .lnk 一次 WScript.Shell 调用,也避免了"指向文件夹的快捷方式跑到文件夹标签"。
+        // 这条守卫同时禁止以后有人把解析手写回来(旧版用 Type.GetTypeFromProgID 踩过坑)。
         var source = ReadRepositoryFile("src", "DesktopBox", "Services", "CategorizerService.cs");
 
-        source.Should().Contain("ShellLinkResolver.ResolveTarget(path)");
+        source.Should().Contain("if (ext == \".lnk\") return Shortcut;");
+        source.Should().NotContain("ShellLinkResolver.ResolveTarget");
         source.Should().NotContain("Type.GetTypeFromProgID");
         source.Should().NotContain("Activator.CreateInstance");
         source.Should().NotContain("private static string ResolveShortcut");

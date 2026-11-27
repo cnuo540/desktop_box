@@ -22,12 +22,20 @@ public class CategorizerServiceTests
     [InlineData(".docx", CategorizerService.Document)]
     [InlineData(".md", CategorizerService.Document)]
     [InlineData(".txt", CategorizerService.Document)]
+    // 启用宏的 Office 文档(用户要求:.docm/.xlsm 归文档)
+    [InlineData(".docm", CategorizerService.Document)]
+    [InlineData(".xlsm", CategorizerService.Document)]
+    [InlineData(".pptm", CategorizerService.Document)]
+    // .tsx 是 TypeScript JSX,仍归文档;.ts 则优先当视频(见下)
+    [InlineData(".tsx", CategorizerService.Document)]
     [InlineData(".jpg", CategorizerService.Image)]
     [InlineData(".png", CategorizerService.Image)]
     [InlineData(".zip", CategorizerService.Archive)]
     [InlineData(".7z", CategorizerService.Archive)]
     [InlineData(".mp4", CategorizerService.Video)]
     [InlineData(".mkv", CategorizerService.Video)]
+    // .ts 既是 TypeScript 又是 MPEG-TS —— 按用户要求归视频
+    [InlineData(".ts", CategorizerService.Video)]
     [InlineData(".mp3", CategorizerService.Audio)]
     [InlineData(".flac", CategorizerService.Audio)]
     [InlineData(".ape", CategorizerService.Audio)]
